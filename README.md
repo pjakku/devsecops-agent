@@ -4,7 +4,7 @@
 
 ## Features
 
-- `scan <target_path>` validates a target path, inspects project files, runs internal scanners, optionally runs Semgrep when available, prints a summary, and writes a JSON report
+- `scan <target_path>` validates a target path, inspects project files, runs internal scanners, optionally runs Semgrep when available, deduplicates overlapping findings, prints a summary, and writes a JSON report
 - `version` prints the installed package version
 - `config init` creates a starter YAML configuration file
 
@@ -62,6 +62,14 @@ python -m devsecops_agent version
 python -m devsecops_agent config init
 ```
 
+Additional scan examples:
+
+```bash
+python -m devsecops_agent scan . --fail-on medium
+python -m devsecops_agent scan . --json-out artifacts\scan-report.json
+python -m devsecops_agent scan . --no-semgrep
+```
+
 ## Run with the installed CLI
 
 ```bash
@@ -71,12 +79,22 @@ devsecops-agent version
 devsecops-agent config init
 ```
 
+CI-friendly examples:
+
+```bash
+devsecops-agent scan . --fail-on high
+devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
+devsecops-agent scan . --no-semgrep
+```
+
 ## Example output
 
 ```text
 DevSecOps Agent Scan Summary
 Target: C:\projects\sample-app
 Total files: 12
+Total findings: 3
+Fail threshold: high
 Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner
 Scanner execution:
   source_scanner: ran (0 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
@@ -94,8 +112,14 @@ Severity totals:
   medium: 0
   low: 0
   info: 1
+Findings by scanner:
+  dependency_scanner: 1
+Findings by category:
+  dependency: 1
 Overall status: WARN
 Report written to: C:\projects\sample-app\reports\scan-report.json
+Top findings:
+  [info] dependency_scanner | Dependency manifest detected | package.json
 ```
 
 ## Example with Semgrep installed
@@ -104,6 +128,8 @@ Report written to: C:\projects\sample-app\reports\scan-report.json
 DevSecOps Agent Scan Summary
 Target: C:\projects\sample-app
 Total files: 12
+Total findings: 4
+Fail threshold: high
 Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner, semgrep
 Scanner execution:
   source_scanner: ran (0 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
@@ -122,8 +148,21 @@ Severity totals:
   medium: 1
   low: 0
   info: 1
+Findings by scanner:
+  dependency_scanner: 1
+  semgrep: 2
+  source_scanner: 1
+Findings by category:
+  dependency: 1
+  sast: 2
+  secrets: 1
 Overall status: FAIL
 Report written to: C:\projects\sample-app\reports\scan-report.json
+Top findings:
+  [high] source_scanner | Suspicious secrets-related filename detected | .env
+  [medium] semgrep | Unsafe subprocess usage | app.py
+  [low] semgrep | Possible weak validation | app.py
+  [info] dependency_scanner | Dependency manifest detected | package.json
 ```
 
 ## Example Semgrep failure output
@@ -153,6 +192,8 @@ Or after editable install:
 ```bash
 devsecops-agent scan C:\path\to\sample-folder
 ```
+
+Use `--json-out` if you want the report written somewhere specific, and `--no-semgrep` if you want to compare internal-only results against the combined scan output.
 
 ## Generated files
 

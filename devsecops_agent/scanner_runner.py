@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from devsecops_agent.models import Finding, ScanReport, ScanResult, ScannerExecution
+from devsecops_agent.models import Finding, ScanOptions, ScanReport, ScanResult, ScannerExecution
 from devsecops_agent.report_writer import write_report
 from devsecops_agent.scanners import config_scanner, dependency_scanner, manifest_scanner, semgrep_runner, source_scanner
 from devsecops_agent.utils import (
+    assign_finding_ids,
+    calculate_category_summary,
+    calculate_scanner_summary,
     calculate_severity_summary,
+    deduplicate_findings,
     determine_overall_status,
     inspect_project_files,
     iter_project_files,
+    sort_findings,
     utc_now_iso,
     validate_target_path,
 )
@@ -22,7 +27,13 @@ SCANNER_PIPELINE = (
 )
 
 
-def run_scan(target_path: Path) -> ScanResult:
+def run_scan(
+    target_path: Path,
+    *,
+    fail_on: str = "high",
+    json_output_path: Path = Path("reports/scan-report.json"),
+    include_semgrep: bool = True,
+) -> ScanResult:
     resolved_target = validate_target_path(target_path)
     started_at = utc_now_iso()
     files = iter_project_files(resolved_target)
@@ -48,12 +59,35 @@ def run_scan(target_path: Path) -> ScanResult:
         )
 
     scanners_run.append("semgrep")
-    semgrep_result = semgrep_runner.run(resolved_target, resolved_target)
-    findings.extend(semgrep_result.findings)
-    scanner_executions.append(semgrep_result.execution)
+    if include_semgrep:
+        semgrep_result = semgrep_runner.run(resolved_target, resolved_target)
+        findings.extend(semgrep_result.findings)
+        scanner_executions.append(semgrep_result.execution)
+    else:
+        scanner_executions.append(
+            ScannerExecution(
+                scanner_name="semgrep",
+                status="skipped",
+                command=" ".join(
+                    semgrep_runner.build_semgrep_command(
+                        "semgrep",
+                        resolved_target,
+                        semgrep_runner.DEFAULT_SEMGREP_CONFIGS,
+                    )
+                ),
+                configs_used=semgrep_runner.DEFAULT_SEMGREP_CONFIGS,
+                findings_count=0,
+                message="Semgrep skipped by CLI option.",
+                stderr="",
+            )
+        )
 
+    findings = assign_finding_ids(deduplicate_findings(findings))
+    findings = sort_findings(findings)
     severity_summary = calculate_severity_summary(findings)
-    overall_status = determine_overall_status(severity_summary)
+    category_summary = calculate_category_summary(findings)
+    scanner_summary = calculate_scanner_summary(findings)
+    overall_status = determine_overall_status(severity_summary, fail_on=fail_on)
     report = ScanReport(
         target_path=str(resolved_target),
         started_at=started_at,
@@ -62,10 +96,14 @@ def run_scan(target_path: Path) -> ScanResult:
         counts_by_extension=inspection.counts_by_extension,
         project_categories=inspection.categories,
         scanners_run=scanners_run,
+        fail_on=fail_on,
+        total_findings=len(findings),
         scanner_executions=scanner_executions,
         findings=findings,
         severity_summary=severity_summary,
+        category_summary=category_summary,
+        scanner_summary=scanner_summary,
         overall_status=overall_status,
     )
-    report_path = write_report(report)
+    report_path = write_report(report, json_output_path)
     return ScanResult(report=report, report_path=str(report_path))

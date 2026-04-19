@@ -16,6 +16,7 @@ def run(files: list[Path], base_path: Path) -> list[Finding]:
 
         findings.append(
             Finding(
+                finding_id="",
                 scanner_name="source_scanner",
                 category="secrets",
                 severity="high",

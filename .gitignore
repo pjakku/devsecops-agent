@@ -10,3 +10,5 @@ dist/
 Notes.docx
 
 devsecops_agent.egg-info/
+
+artifacts/

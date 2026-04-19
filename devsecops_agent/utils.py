@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
-from devsecops_agent.models import Finding, OverallStatus, ProjectInspection
+from devsecops_agent.models import Finding, OverallStatus, ProjectInspection, Severity
 
 DEFAULT_EXCLUDED_DIRECTORIES = {
     ".venv",
@@ -18,6 +20,13 @@ DEFAULT_EXCLUDED_DIRECTORIES = {
 }
 
 SEVERITY_LEVELS = ("critical", "high", "medium", "low", "info")
+SEVERITY_RANK = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "info": 4,
+}
 
 SOURCE_EXTENSIONS = {
     ".py",
@@ -140,6 +149,70 @@ def inspect_project_files(files: list[Path], base_path: Path) -> ProjectInspecti
     )
 
 
+def assign_finding_ids(findings: list[Finding]) -> list[Finding]:
+    identified_findings: list[Finding] = []
+    for finding in findings:
+        if finding.finding_id:
+            identified_findings.append(finding)
+            continue
+        finding.finding_id = generate_finding_id(finding)
+        identified_findings.append(finding)
+    return identified_findings
+
+
+def generate_finding_id(finding: Finding) -> str:
+    fingerprint = "|".join(
+        [
+            finding.scanner_name,
+            finding.category,
+            finding.severity,
+            finding.file_path,
+            normalize_similarity_text(finding.title),
+            str(finding.line_number or 0),
+        ]
+    )
+    return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:12]
+
+
+def deduplicate_findings(findings: list[Finding]) -> list[Finding]:
+    deduplicated: list[Finding] = []
+    for finding in findings:
+        if any(findings_overlap(existing, finding) for existing in deduplicated):
+            continue
+        deduplicated.append(finding)
+    return deduplicated
+
+
+def findings_overlap(left: Finding, right: Finding) -> bool:
+    if left.file_path != right.file_path:
+        return False
+    if left.severity != right.severity:
+        return False
+    return titles_are_similar(left.title, right.title)
+
+
+def titles_are_similar(left_title: str, right_title: str) -> bool:
+    normalized_left = normalize_similarity_text(left_title)
+    normalized_right = normalize_similarity_text(right_title)
+    if not normalized_left or not normalized_right:
+        return False
+    if normalized_left == normalized_right:
+        return True
+    if normalized_left in normalized_right or normalized_right in normalized_left:
+        return True
+    left_tokens = set(normalized_left.split())
+    right_tokens = set(normalized_right.split())
+    if not left_tokens or not right_tokens:
+        return False
+    overlap_ratio = len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+    return overlap_ratio >= 0.6
+
+
+def normalize_similarity_text(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
 def calculate_severity_summary(findings: list[Finding]) -> dict[str, int]:
     summary = {severity: 0 for severity in SEVERITY_LEVELS}
     for finding in findings:
@@ -149,12 +222,41 @@ def calculate_severity_summary(findings: list[Finding]) -> dict[str, int]:
     return summary
 
 
-def determine_overall_status(severity_summary: dict[str, int]) -> OverallStatus:
-    if severity_summary.get("critical", 0) > 0 or severity_summary.get("high", 0) > 0:
+def calculate_category_summary(findings: list[Finding]) -> dict[str, int]:
+    counter = Counter(finding.category for finding in findings)
+    return dict(sorted(counter.items()))
+
+
+def calculate_scanner_summary(findings: list[Finding]) -> dict[str, int]:
+    counter = Counter(finding.scanner_name for finding in findings)
+    return dict(sorted(counter.items()))
+
+
+def determine_overall_status(
+    severity_summary: dict[str, int],
+    fail_on: Severity = "high",
+) -> OverallStatus:
+    threshold_rank = SEVERITY_RANK.get(fail_on, SEVERITY_RANK["high"])
+    if any(
+        severity_summary.get(level, 0) > 0 and SEVERITY_RANK.get(level, len(SEVERITY_RANK)) <= threshold_rank
+        for level in SEVERITY_LEVELS
+    ):
         return "FAIL"
-    if any(severity_summary.get(level, 0) > 0 for level in ("medium", "low", "info")):
+    if sum(severity_summary.values()) > 0:
         return "WARN"
     return "PASS"
+
+
+def sort_findings(findings: list[Finding]) -> list[Finding]:
+    return sorted(
+        findings,
+        key=lambda finding: (
+            SEVERITY_RANK.get(finding.severity, len(SEVERITY_RANK)),
+            finding.file_path,
+            normalize_similarity_text(finding.title),
+            finding.scanner_name,
+        ),
+    )
 
 
 def read_text_file(file_path: Path, max_bytes: int = 1_000_000) -> str:

@@ -27,6 +27,7 @@ def run(files: list[Path], base_path: Path) -> list[Finding]:
 
             findings.append(
                 Finding(
+                    finding_id="",
                     scanner_name="config_scanner",
                     category="config",
                     severity="medium",

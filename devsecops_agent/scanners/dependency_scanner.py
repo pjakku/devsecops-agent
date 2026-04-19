@@ -23,6 +23,7 @@ def run(files: list[Path], base_path: Path) -> list[Finding]:
 
         findings.append(
             Finding(
+                finding_id="",
                 scanner_name="dependency_scanner",
                 category="dependency",
                 severity="info",

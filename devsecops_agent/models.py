@@ -18,6 +18,7 @@ class ProjectInspection:
 
 @dataclass(slots=True)
 class Finding:
+    finding_id: str
     scanner_name: str
     category: str
     severity: Severity
@@ -46,6 +47,13 @@ class ScannerExecution:
 
 
 @dataclass(slots=True)
+class ScanOptions:
+    fail_on: Severity = "high"
+    include_semgrep: bool = True
+    json_output_path: str = "reports/scan-report.json"
+
+
+@dataclass(slots=True)
 class ScanReport:
     target_path: str
     started_at: str
@@ -54,9 +62,13 @@ class ScanReport:
     counts_by_extension: dict[str, int]
     project_categories: dict[str, list[str]]
     scanners_run: list[str]
+    fail_on: Severity
+    total_findings: int
     scanner_executions: list[ScannerExecution] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     severity_summary: dict[str, int] = field(default_factory=dict)
+    category_summary: dict[str, int] = field(default_factory=dict)
+    scanner_summary: dict[str, int] = field(default_factory=dict)
     overall_status: OverallStatus = "PASS"
 
     def to_dict(self) -> dict[str, object]:
@@ -68,9 +80,13 @@ class ScanReport:
             "counts_by_extension": self.counts_by_extension,
             "project_categories": self.project_categories,
             "scanners_run": self.scanners_run,
+            "fail_on": self.fail_on,
+            "total_findings": self.total_findings,
             "scanner_executions": [execution.to_dict() for execution in self.scanner_executions],
             "findings": [finding.to_dict() for finding in self.findings],
             "severity_summary": self.severity_summary,
+            "category_summary": self.category_summary,
+            "scanner_summary": self.scanner_summary,
             "overall_status": self.overall_status,
         }
 

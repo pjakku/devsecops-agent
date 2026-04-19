@@ -180,6 +180,7 @@ def parse_semgrep_findings(payload: dict[str, object], base_path: Path) -> list[
 
         findings.append(
             Finding(
+                finding_id="",
                 scanner_name="semgrep",
                 category="sast",
                 severity=normalize_semgrep_severity(extra.get("severity")),

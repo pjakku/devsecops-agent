@@ -43,6 +43,7 @@ def run(files: list[Path], base_path: Path) -> list[Finding]:
                     continue
                 findings.append(
                     Finding(
+                        finding_id="",
                         scanner_name="manifest_scanner",
                         category="manifest",
                         severity=severity,
