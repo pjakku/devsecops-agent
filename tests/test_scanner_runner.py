@@ -17,6 +17,28 @@ from devsecops_agent.utils import determine_overall_status
 runner = CliRunner()
 
 
+def extract_finding_rows(output: str) -> list[str]:
+    lines = output.splitlines()
+    section_index = None
+    for label in ("Findings:", "Top findings:"):
+        if label in lines:
+            section_index = lines.index(label)
+            break
+    if section_index is None:
+        return []
+
+    rows: list[str] = []
+    for line in lines[section_index + 1 :]:
+        if not line.startswith("  "):
+            break
+        if line.strip() == "<none>":
+            continue
+        if "title | location" in line:
+            continue
+        rows.append(line)
+    return rows
+
+
 def test_run_scan_raises_for_invalid_path(tmp_path):
     missing_path = tmp_path / "does-not-exist"
 
@@ -80,6 +102,11 @@ def test_run_scan_generates_findings_for_risky_files(tmp_path, monkeypatch):
     assert any(finding.file_path == ".env" for finding in result.report.findings)
     assert any(finding.scanner_name == "manifest_scanner" for finding in result.report.findings)
     assert all(finding.finding_id for finding in result.report.findings)
+    assert all(
+        {"finding_id", "scanner_name", "category", "severity", "title", "description", "file_path", "recommendation"}
+        <= set(finding.to_dict().keys())
+        for finding in result.report.findings
+    )
 
 
 def test_run_scan_respects_fail_on_threshold(tmp_path, monkeypatch):
@@ -496,6 +523,364 @@ def test_cli_summary_only_suppresses_top_findings(tmp_path, monkeypatch):
     assert "Top findings:" not in result.stdout
 
 
+def test_cli_filters_findings_by_severity(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "deployment.yaml").write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: demo:latest\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--severity", "high"])
+
+    assert result.exit_code == 1
+    assert "Suspicious secrets-related filename detected" in result.stdout
+    assert "Container image uses latest tag" not in result.stdout
+
+
+def test_cli_filters_findings_by_semgrep_scanner(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_semgrep_run(target_path, base_path):
+        return SemgrepRunResult(
+            execution=ScannerExecution(
+                scanner_name="semgrep",
+                status="ran",
+                command="semgrep scan",
+                configs_used=["p/python", "p/kubernetes"],
+                findings_count=1,
+                message="Semgrep scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title="Unsafe subprocess usage",
+                    description="Semgrep test finding.",
+                    file_path="app.py",
+                    line_number=7,
+                    recommendation="Review.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--scanner", "semgrep"])
+
+    assert result.exit_code == 0
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert all("semgrep" in line for line in finding_rows)
+    assert any("Unsafe subprocess usage" in line for line in finding_rows)
+
+
+def test_cli_medium_semgrep_finding_fails_when_threshold_is_medium(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_semgrep_run(target_path, base_path):
+        return SemgrepRunResult(
+            execution=ScannerExecution(
+                scanner_name="semgrep",
+                status="ran",
+                command="semgrep scan",
+                configs_used=["p/python", "p/kubernetes"],
+                findings_count=1,
+                message="Semgrep scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title="Unsafe subprocess usage",
+                    description="Semgrep test finding.",
+                    file_path="app.py",
+                    line_number=7,
+                    recommendation="Review.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--scanner", "semgrep", "--fail-on", "medium"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 1
+
+
+def test_cli_filters_findings_by_scanner(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "deployment.yaml").write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: demo:latest\n"
+        "          securityContext:\n"
+        "            privileged: true\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--scanner", "manifest_scanner"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert all("manifest_scanner" in line for line in finding_rows)
+
+
+def test_cli_filters_findings_by_manifest_category(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "deployment.yaml").write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: demo:latest\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--category", "manifest"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert all(" manifest      " in line or " manifest " in line for line in finding_rows)
+    assert any("Container image uses latest tag" in line for line in finding_rows)
+
+
+def test_cli_filters_findings_by_config_category(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--category", "config"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert all(" config " in line or " config        " in line for line in finding_rows)
+    assert any("Risky keyword found in configuration" in line for line in finding_rows)
+
+
+def test_cli_filters_findings_by_category(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "requirements.txt").write_text("typer==0.12.3\n", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--category", "dependency"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 1
+    assert "dependency_scanner" in finding_rows[0]
+    assert "Dependency manifest detected" in finding_rows[0]
+
+
+def test_cli_combined_filters_work_together(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
+    (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_semgrep_run(target_path, base_path):
+        return SemgrepRunResult(
+            execution=ScannerExecution(
+                scanner_name="semgrep",
+                status="ran",
+                command="semgrep scan",
+                configs_used=["p/python", "p/kubernetes"],
+                findings_count=2,
+                message="Semgrep scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title="Unsafe subprocess usage",
+                    description="Medium semgrep finding.",
+                    file_path="app.py",
+                    line_number=4,
+                    recommendation="Review.",
+                ),
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="high",
+                    title="Hardcoded secret",
+                    description="High semgrep finding.",
+                    file_path="app.py",
+                    line_number=8,
+                    recommendation="Review.",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
+    result = runner.invoke(
+        app,
+        ["scan", str(sample_dir), "--severity", "medium", "--scanner", "semgrep", "--category", "sast"],
+    )
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 1
+    assert "Unsafe subprocess usage" in finding_rows[0]
+
+
+def test_cli_show_all_findings_displays_all_filtered_findings(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
+    (sample_dir / "requirements.txt").write_text("typer==0.12.3\n", encoding="utf-8")
+    (sample_dir / "deployment.yaml").write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: demo:latest\n"
+        "          securityContext:\n"
+        "            privileged: true\n"
+        "            runAsUser: 0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--show-all-findings", "--max-findings", "1"])
+
+    assert result.exit_code == 1
+    assert "Findings:" in result.stdout
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 6
+
+
+def test_cli_show_all_findings_with_medium_filter_displays_all_medium_rows(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
+    (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_semgrep_run(target_path, base_path):
+        return SemgrepRunResult(
+            execution=ScannerExecution(
+                scanner_name="semgrep",
+                status="ran",
+                command="semgrep scan",
+                configs_used=["p/python", "p/kubernetes"],
+                findings_count=2,
+                message="Semgrep scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title="Unsafe subprocess usage",
+                    description="Medium semgrep finding.",
+                    file_path="app.py",
+                    line_number=4,
+                    recommendation="Review.",
+                ),
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title="Weak validation",
+                    description="Another medium semgrep finding.",
+                    file_path="app.py",
+                    line_number=8,
+                    recommendation="Review.",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
+    result = runner.invoke(
+        app,
+        ["scan", str(sample_dir), "--severity", "medium", "--show-all-findings", "--fail-on", "medium"],
+    )
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 3
+    assert any("Risky keyword found in configuration" in line for line in finding_rows)
+    assert any("Unsafe subprocess usage" in line for line in finding_rows)
+    assert any("Weak validation" in line for line in finding_rows)
+
+
+def test_cli_filtered_terminal_output_does_not_change_json_report(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
+    output_path = tmp_path / "reports" / "filtered.json"
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            str(sample_dir),
+            "--no-semgrep",
+            "--severity",
+            "high",
+            "--json-out",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    report_data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert len(report_data["findings"]) == 2
+    assert all(finding["finding_id"] for finding in report_data["findings"])
+
+
 def test_cli_max_findings_limits_terminal_output(tmp_path, monkeypatch):
     sample_dir = tmp_path / "project"
     sample_dir.mkdir()
@@ -520,8 +905,8 @@ def test_cli_max_findings_limits_terminal_output(tmp_path, monkeypatch):
     result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--max-findings", "2"])
 
     assert result.exit_code == 1
-    top_finding_lines = [line for line in result.stdout.splitlines() if line.startswith("  [")]
-    assert len(top_finding_lines) == 2
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 2
 
 
 def test_cli_writes_sarif_output(tmp_path, monkeypatch):
@@ -566,9 +951,9 @@ def test_cli_displays_top_findings_in_severity_order(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "Top findings:" in result.stdout
-    high_index = result.stdout.index("[high]")
-    medium_index = result.stdout.index("[medium]")
-    assert high_index < medium_index
+    finding_rows = extract_finding_rows(result.stdout)
+    severities = [row.split()[1] for row in finding_rows]
+    assert severities == ["high", "high", "high", "medium", "medium", "info"][: len(severities)]
 
 
 def test_cli_truncates_long_finding_titles(tmp_path, monkeypatch):
@@ -607,7 +992,7 @@ def test_cli_truncates_long_finding_titles(tmp_path, monkeypatch):
     monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
     result = runner.invoke(app, ["scan", str(sample_dir)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0
     assert "..." in result.stdout
 
 

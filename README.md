@@ -2,6 +2,14 @@
 
 `devsecops-agent` is a Python CLI foundation for a future DevSecOps scanning tool. It provides a normalized internal scan workflow, optional Semgrep-based SAST scanning, structured findings, JSON report output, and default configuration bootstrapping.
 
+## Project Status
+
+CLI V1 is complete and ready for local scanning and CI/CD integration.
+
+## Author
+
+Praveen Jakku
+
 ## Features
 
 - `scan <target_path>` validates a target path, inspects project files, runs internal scanners, optionally runs Semgrep when available, deduplicates overlapping findings, prints a summary, and writes a JSON report
@@ -71,6 +79,10 @@ python -m devsecops_agent scan . --no-semgrep
 python -m devsecops_agent scan . --summary-only
 python -m devsecops_agent scan . --max-findings 5
 python -m devsecops_agent scan . --sarif-out artifacts\scan-results.sarif
+python -m devsecops_agent scan . --severity high
+python -m devsecops_agent scan . --scanner semgrep
+python -m devsecops_agent scan . --category manifest
+python -m devsecops_agent scan . --show-all-findings
 ```
 
 ## Run with the installed CLI
@@ -89,6 +101,7 @@ devsecops-agent scan . --fail-on high
 devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
 devsecops-agent scan . --no-semgrep
 devsecops-agent scan . --summary-only --json-out reports\ci-scan.json --sarif-out reports\ci-scan.sarif
+devsecops-agent scan . --severity high --scanner semgrep
 ```
 
 ## Exit codes
@@ -226,6 +239,17 @@ Use `--json-out` if you want the report written somewhere specific, and `--no-se
 
 Use `--summary-only` to suppress top-finding details in terminal output while still writing the full JSON report. Use `--max-findings` to limit only the terminal display count. Use `--sarif-out` to generate a CI-friendly SARIF artifact alongside the JSON report.
 
+Terminal filtering affects only what is printed. The full JSON report still contains every finding.
+
+Filtering examples:
+
+```bash
+devsecops-agent scan . --severity high
+devsecops-agent scan . --scanner semgrep
+devsecops-agent scan . --category dependency
+devsecops-agent scan . --severity medium --show-all-findings
+```
+
 ## CI artifacts
 
 Generate both JSON and SARIF outputs:
@@ -266,3 +290,8 @@ stage('DevSecOps Scan') {
 ```bash
 pytest
 ```
+
+## Next planned integrations
+
+- Jenkins integration
+- VS Code wrapper
