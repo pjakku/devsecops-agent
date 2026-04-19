@@ -1,0 +1,8 @@
+project_name: devsecops-agent
+report_format: json
+reports_directory: reports
+scanners:
+  semgrep: false
+  gitleaks: false
+  trivy: false
+  dependency: false
