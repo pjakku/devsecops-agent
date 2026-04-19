@@ -1,10 +1,10 @@
 # devsecops-agent
 
-`devsecops-agent` is a Python CLI foundation for a future DevSecOps scanning tool. This first step focuses on clean packaging, a simple command surface, local scan summaries, JSON report output, and default configuration bootstrapping.
+`devsecops-agent` is a Python CLI foundation for a future DevSecOps scanning tool. It provides a normalized internal scan workflow with placeholder scanners, structured findings, JSON report output, and default configuration bootstrapping.
 
 ## Features
 
-- `scan <target_path>` validates a target path, skips common cache and build directories, counts files by extension, prints a summary, and writes a JSON report
+- `scan <target_path>` validates a target path, inspects project files, runs placeholder internal scanners, prints a summary, and writes a JSON report
 - `version` prints the installed package version
 - `config init` creates a starter YAML configuration file
 
@@ -45,15 +45,15 @@ devsecops-agent config init
 DevSecOps Agent Scan Summary
 Target: C:\projects\sample-app
 Total files: 12
-Unique extensions: 4
-
-File counts by extension:
-  .py: 5
-  .md: 3
-  .yaml: 2
-  .json: 2
-
-Report written to: reports\scan-report.json
+Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner
+Severity totals:
+  critical: 0
+  high: 1
+  medium: 2
+  low: 0
+  info: 1
+Overall status: FAIL
+Report written to: C:\projects\sample-app\reports\scan-report.json
 ```
 
 ## Generated files

@@ -21,18 +21,16 @@ app.add_typer(config_app, name="config")
 def scan(target_path: Path) -> None:
     """Scan a target path and write a local report."""
     result = run_scan(target_path)
+    report = result.report
+
     typer.echo("DevSecOps Agent Scan Summary")
-    typer.echo(f"Target: {result.target_path}")
-    typer.echo(f"Total files: {result.total_files}")
-    typer.echo(f"Unique extensions: {len(result.file_counts)}")
-    typer.echo("")
-    typer.echo("File counts by extension:")
-    if result.file_counts:
-        for extension, count in sorted(result.file_counts.items()):
-            typer.echo(f"  {extension}: {count}")
-    else:
-        typer.echo("  <no files found>")
-    typer.echo("")
+    typer.echo(f"Target: {report.target_path}")
+    typer.echo(f"Total files: {report.total_files}")
+    typer.echo(f"Scanner modules run: {', '.join(report.scanners_run)}")
+    typer.echo("Severity totals:")
+    for severity, count in report.severity_summary.items():
+        typer.echo(f"  {severity}: {count}")
+    typer.echo(f"Overall status: {report.overall_status}")
     typer.echo(f"Report written to: {result.report_path}")
 
 

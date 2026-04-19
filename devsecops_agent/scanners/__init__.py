@@ -1,1 +1,1 @@
-"""Scanner integrations package."""
+"""Placeholder internal scanner modules."""
