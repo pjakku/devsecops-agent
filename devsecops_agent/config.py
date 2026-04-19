@@ -6,12 +6,20 @@ import yaml
 
 from devsecops_agent.utils import ensure_directory
 
+DEFAULT_SEMGREP_CONFIGS = [
+    "p/python",
+    "p/kubernetes",
+]
+
 DEFAULT_CONFIG: dict[str, object] = {
     "project_name": "devsecops-agent",
     "report_format": "json",
     "reports_directory": "reports",
     "scanners": {
-        "semgrep": False,
+        "semgrep": {
+            "enabled": True,
+            "configs": DEFAULT_SEMGREP_CONFIGS,
+        },
         "gitleaks": False,
         "trivy": False,
         "dependency": False,

@@ -2,7 +2,11 @@ project_name: devsecops-agent
 report_format: json
 reports_directory: reports
 scanners:
-  semgrep: false
+  semgrep:
+    enabled: true
+    configs:
+      - p/python
+      - p/kubernetes
   gitleaks: false
   trivy: false
   dependency: false

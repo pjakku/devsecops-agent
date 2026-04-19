@@ -27,6 +27,20 @@ def scan(target_path: Path) -> None:
     typer.echo(f"Target: {report.target_path}")
     typer.echo(f"Total files: {report.total_files}")
     typer.echo(f"Scanner modules run: {', '.join(report.scanners_run)}")
+    typer.echo("Scanner execution:")
+    for execution in report.scanner_executions:
+        configs_display = ", ".join(execution.configs_used) if execution.configs_used else "n/a"
+        details = (
+            f"{execution.scanner_name}: {execution.status} "
+            f"({execution.findings_count} findings, configs=[{configs_display}])"
+        )
+        if execution.message:
+            details = f"{details} - {execution.message}"
+        typer.echo(f"  {details}")
+        if execution.command:
+            typer.echo(f"    command: {execution.command}")
+        if execution.stderr:
+            typer.echo(f"    stderr: {execution.stderr}")
     typer.echo("Severity totals:")
     for severity, count in report.severity_summary.items():
         typer.echo(f"  {severity}: {count}")

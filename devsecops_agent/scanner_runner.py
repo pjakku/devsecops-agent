@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from devsecops_agent.models import Finding, ScanReport, ScanResult
+from devsecops_agent.models import Finding, ScanReport, ScanResult, ScannerExecution
 from devsecops_agent.report_writer import write_report
-from devsecops_agent.scanners import config_scanner, dependency_scanner, manifest_scanner, source_scanner
+from devsecops_agent.scanners import config_scanner, dependency_scanner, manifest_scanner, semgrep_runner, source_scanner
 from devsecops_agent.utils import (
     calculate_severity_summary,
     determine_overall_status,
@@ -30,9 +30,27 @@ def run_scan(target_path: Path) -> ScanResult:
 
     findings: list[Finding] = []
     scanners_run: list[str] = []
+    scanner_executions: list[ScannerExecution] = []
     for scanner_name, scanner in SCANNER_PIPELINE:
         scanners_run.append(scanner_name)
-        findings.extend(scanner(files, resolved_target))
+        scanner_findings = scanner(files, resolved_target)
+        findings.extend(scanner_findings)
+        scanner_executions.append(
+            ScannerExecution(
+                scanner_name=scanner_name,
+                status="ran",
+                command="internal",
+                configs_used=[],
+                findings_count=len(scanner_findings),
+                message="Internal placeholder scanner completed successfully.",
+                stderr="",
+            )
+        )
+
+    scanners_run.append("semgrep")
+    semgrep_result = semgrep_runner.run(resolved_target, resolved_target)
+    findings.extend(semgrep_result.findings)
+    scanner_executions.append(semgrep_result.execution)
 
     severity_summary = calculate_severity_summary(findings)
     overall_status = determine_overall_status(severity_summary)
@@ -44,6 +62,7 @@ def run_scan(target_path: Path) -> ScanResult:
         counts_by_extension=inspection.counts_by_extension,
         project_categories=inspection.categories,
         scanners_run=scanners_run,
+        scanner_executions=scanner_executions,
         findings=findings,
         severity_summary=severity_summary,
         overall_status=overall_status,
