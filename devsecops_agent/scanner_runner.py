@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from devsecops_agent.models import Finding, ScanOptions, ScanReport, ScanResult, ScannerExecution
+from devsecops_agent.models import Finding, ScanReport, ScanResult, ScannerExecution
 from devsecops_agent.report_writer import write_report
 from devsecops_agent.scanners import config_scanner, dependency_scanner, manifest_scanner, semgrep_runner, source_scanner
 from devsecops_agent.utils import (

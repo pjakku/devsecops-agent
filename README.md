@@ -68,6 +68,9 @@ Additional scan examples:
 python -m devsecops_agent scan . --fail-on medium
 python -m devsecops_agent scan . --json-out artifacts\scan-report.json
 python -m devsecops_agent scan . --no-semgrep
+python -m devsecops_agent scan . --summary-only
+python -m devsecops_agent scan . --max-findings 5
+python -m devsecops_agent scan . --sarif-out artifacts\scan-results.sarif
 ```
 
 ## Run with the installed CLI
@@ -85,6 +88,32 @@ CI-friendly examples:
 devsecops-agent scan . --fail-on high
 devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
 devsecops-agent scan . --no-semgrep
+devsecops-agent scan . --summary-only --json-out reports\ci-scan.json --sarif-out reports\ci-scan.sarif
+```
+
+## Exit codes
+
+- `0` = scan completed and did not violate the fail threshold
+- `1` = scan completed and violated the fail threshold
+- `2` = runtime or tool execution error
+- `3` = invalid CLI usage or invalid target path
+
+## Checking exit codes
+
+PowerShell:
+
+```powershell
+devsecops-agent scan . --fail-on high
+$LASTEXITCODE
+```
+
+`python -m devsecops_agent ...` returns the same process exit code.
+
+Bash:
+
+```bash
+devsecops-agent scan . --fail-on high
+echo $?
 ```
 
 ## Example output
@@ -194,6 +223,38 @@ devsecops-agent scan C:\path\to\sample-folder
 ```
 
 Use `--json-out` if you want the report written somewhere specific, and `--no-semgrep` if you want to compare internal-only results against the combined scan output.
+
+Use `--summary-only` to suppress top-finding details in terminal output while still writing the full JSON report. Use `--max-findings` to limit only the terminal display count. Use `--sarif-out` to generate a CI-friendly SARIF artifact alongside the JSON report.
+
+## CI artifacts
+
+Generate both JSON and SARIF outputs:
+
+```bash
+devsecops-agent scan . --json-out reports\scan-report.json --sarif-out reports\scan-report.sarif
+```
+
+Example Jenkins PowerShell step:
+
+```powershell
+devsecops-agent scan . --fail-on high --json-out reports\scan-report.json --sarif-out reports\scan-report.sarif
+if ($LASTEXITCODE -eq 1) { Write-Host "Security threshold violated"; exit 1 }
+if ($LASTEXITCODE -ge 2) { Write-Host "Scan execution error"; exit $LASTEXITCODE }
+```
+
+Example Jenkins declarative pipeline step:
+
+```groovy
+stage('DevSecOps Scan') {
+  steps {
+    powershell '''
+      devsecops-agent scan . --fail-on high --json-out reports\\scan-report.json --sarif-out reports\\scan-report.sarif
+      if ($LASTEXITCODE -eq 1) { exit 1 }
+      if ($LASTEXITCODE -ge 2) { exit $LASTEXITCODE }
+    '''
+  }
+}
+```
 
 ## Generated files
 

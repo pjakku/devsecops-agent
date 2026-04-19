@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-devsecops-agent = "devsecops_agent.cli:run"
+devsecops-agent = "devsecops_agent.cli:main"
 
 [tool.setuptools]
 include-package-data = true

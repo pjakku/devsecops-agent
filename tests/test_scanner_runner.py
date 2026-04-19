@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from devsecops_agent.cli import app
+from devsecops_agent.cli import app, main
 from devsecops_agent.models import Finding, ScannerExecution
 from devsecops_agent.scanner_runner import run_scan
 from devsecops_agent.scanners import semgrep_runner
@@ -392,10 +392,153 @@ def test_cli_supports_fail_on_and_json_out_and_no_semgrep(tmp_path, monkeypatch)
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Fail threshold: medium" in result.stdout
     assert "Semgrep skipped by CLI option." in result.stdout
     assert output_path.exists()
+
+
+def test_main_exit_code_safe_scan_is_zero(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = main(["scan", str(sample_dir)])
+
+    assert result == 0
+
+
+def test_main_exit_code_vulnerable_scan_is_one(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "vulnerable-project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = main(["scan", str(sample_dir)])
+
+    assert result == 1
+
+
+def test_main_exit_code_invalid_target_path_is_three(tmp_path):
+    missing_path = tmp_path / "does-not-exist"
+
+    result = main(["scan", str(missing_path)])
+
+    assert result == 3
+
+
+def test_main_invalid_fail_on_returns_exit_code_three(tmp_path):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = main(["scan", str(sample_dir), "--fail-on", "invalid"])
+
+    assert result == 3
+
+
+def test_main_exit_code_with_no_semgrep_safe_scan_is_zero(tmp_path):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = main(["scan", str(sample_dir), "--no-semgrep"])
+
+    assert result == 0
+
+
+def test_main_exit_code_semgrep_failure_does_not_crash_safe_scan(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=2,
+            stdout="",
+            stderr="Semgrep crashed",
+        )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: "semgrep")
+    monkeypatch.setattr(semgrep_runner.subprocess, "run", fake_run)
+
+    result = main(["scan", str(sample_dir)])
+
+    assert result == 0
+
+
+def test_main_runtime_exception_returns_two(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("devsecops_agent.cli.run_scan", explode)
+
+    result = main(["scan", str(sample_dir)])
+
+    assert result == 2
+
+
+def test_cli_summary_only_suppresses_top_findings(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--summary-only"])
+
+    assert result.exit_code == 1
+    assert "Top findings:" not in result.stdout
+
+
+def test_cli_max_findings_limits_terminal_output(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    (sample_dir / "settings.yaml").write_text("password: demo\nsecret: another\n", encoding="utf-8")
+    (sample_dir / "deployment.yaml").write_text(
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: demo:latest\n"
+        "          securityContext:\n"
+        "            privileged: true\n"
+        "            runAsUser: 0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--max-findings", "2"])
+
+    assert result.exit_code == 1
+    top_finding_lines = [line for line in result.stdout.splitlines() if line.startswith("  [")]
+    assert len(top_finding_lines) == 2
+
+
+def test_cli_writes_sarif_output(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    sarif_path = tmp_path / "artifacts" / "scan.sarif"
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--sarif-out", str(sarif_path)])
+
+    assert result.exit_code == 1
+    assert sarif_path.exists()
+    sarif_data = json.loads(sarif_path.read_text(encoding="utf-8"))
+    assert sarif_data["version"] == "2.1.0"
+    assert sarif_data["runs"][0]["results"]
+    assert "SARIF written to:" in result.stdout
 
 
 def test_cli_displays_top_findings_in_severity_order(tmp_path, monkeypatch):
@@ -421,11 +564,51 @@ def test_cli_displays_top_findings_in_severity_order(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Top findings:" in result.stdout
     high_index = result.stdout.index("[high]")
     medium_index = result.stdout.index("[medium]")
     assert high_index < medium_index
+
+
+def test_cli_truncates_long_finding_titles(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    long_title = "Very long finding title " * 8
+
+    def fake_semgrep_run(target_path, base_path):
+        return SemgrepRunResult(
+            execution=ScannerExecution(
+                scanner_name="semgrep",
+                status="ran",
+                command="semgrep scan",
+                configs_used=["p/python", "p/kubernetes"],
+                findings_count=1,
+                message="Semgrep scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="semgrep",
+                    category="sast",
+                    severity="medium",
+                    title=long_title,
+                    description="Long title test.",
+                    file_path="main.py",
+                    line_number=1,
+                    recommendation="Review.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(semgrep_runner, "run", fake_semgrep_run)
+    result = runner.invoke(app, ["scan", str(sample_dir)])
+
+    assert result.exit_code == 1
+    assert "..." in result.stdout
 
 
 @pytest.mark.parametrize(

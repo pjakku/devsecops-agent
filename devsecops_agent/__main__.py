@@ -1,5 +1,5 @@
-from devsecops_agent.cli import run
+from devsecops_agent.cli import main
 
 
 if __name__ == "__main__":
-    run()
+    raise SystemExit(main())
