@@ -14,3 +14,17 @@ devsecops_agent.egg-info/
 artifacts/
 
 artifacts/
+
+.test-venv/
+
+.pytest_tmp/
+
+.pytest_tmp_test/
+
+devsecops_agent.egg-info/
+
+dist/
+
+Notes.docx
+
+pypl-packaging.docx

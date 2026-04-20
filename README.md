@@ -30,6 +30,36 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
+## Packaging and installation
+
+Editable install:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Normal local install:
+
+```bash
+pip install .
+```
+
+Build wheel and sdist artifacts:
+
+```bash
+python -m build
+```
+
+Test install in a fresh virtual environment:
+
+```bash
+python -m venv .venv-test
+.venv-test\Scripts\activate
+pip install dist\devsecops_agent-1.1.0-py3-none-any.whl
+devsecops-agent version
+python -m devsecops_agent version
+```
+
 ## Optional Semgrep setup
 
 Semgrep is optional and is discovered from your system `PATH`. If it is not available, the CLI still runs and records Semgrep as skipped in the terminal summary and JSON report.
@@ -290,6 +320,14 @@ stage('DevSecOps Scan') {
 ```bash
 pytest
 ```
+
+## Release checklist
+
+- Update the package version in `pyproject.toml` and `devsecops_agent/__init__.py`
+- Run `pytest`
+- Build release artifacts with `python -m build`
+- Test install the wheel in a fresh virtual environment
+- Verify both `devsecops-agent version` and `python -m devsecops_agent version`
 
 ## Next planned integrations
 
