@@ -60,6 +60,44 @@ devsecops-agent version
 python -m devsecops_agent version
 ```
 
+## Windows executable build
+
+The CLI can be bundled as a standalone Windows console executable with PyInstaller. This is intended for the future VS Code extension backend so users can run the scanner without installing Python manually.
+
+Install development dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Build the executable:
+
+```bash
+pyinstaller packaging\pyinstaller\devsecops-agent-windows.spec --clean --noconfirm
+```
+
+The executable is generated at:
+
+```text
+dist\devsecops-agent.exe
+```
+
+The file can later be copied into the VS Code extension backend:
+
+```text
+devsecops-agent-vscode\backend\devsecops-agent.exe
+```
+
+Verify the bundled executable:
+
+```bash
+dist\devsecops-agent.exe version
+dist\devsecops-agent.exe config init
+dist\devsecops-agent.exe scan .
+```
+
+Semgrep remains an external executable dependency. The bundled `devsecops-agent.exe` still discovers `semgrep` from `PATH`; it does not bundle Semgrep itself.
+
 ## Optional Semgrep setup
 
 Semgrep is optional and is discovered from your system `PATH`. If it is not available, the CLI still runs and records Semgrep as skipped in the terminal summary and JSON report.
