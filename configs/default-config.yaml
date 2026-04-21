@@ -5,8 +5,8 @@ scanners:
   semgrep:
     enabled: true
     configs:
-      - p/python
-      - p/kubernetes
+    - p/python
+    - p/kubernetes
   gitleaks: false
   trivy: false
   dependency: false

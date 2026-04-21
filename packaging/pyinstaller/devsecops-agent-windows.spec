@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-project_root = Path(SPECPATH).parents[2]
+project_root = Path(SPECPATH).parents[1]
 entrypoint = project_root / "devsecops_agent" / "frozen_cli.py"
 
 a = Analysis(

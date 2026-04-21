@@ -198,7 +198,9 @@ def test_semgrep_not_installed_is_skipped(tmp_path, monkeypatch):
     )
     assert semgrep_execution.status == "skipped"
     assert semgrep_execution.findings_count == 0
-    assert "not found on path" in semgrep_execution.message.lower()
+    assert "checked bundled path" in semgrep_execution.message.lower()
+    assert "semgrep" in semgrep_execution.message.lower()
+    assert "path" in semgrep_execution.message.lower()
     assert semgrep_execution.configs_used == ["p/python", "p/kubernetes"]
     assert semgrep_execution.stderr == ""
 
@@ -237,6 +239,21 @@ def test_semgrep_path_detection_uses_shutil_which(monkeypatch):
     monkeypatch.setattr(semgrep_runner.shutil, "which", lambda name: "C:\\Tools\\semgrep.exe" if name == "semgrep" else None)
 
     assert semgrep_runner.resolve_semgrep_executable() == "C:\\Tools\\semgrep.exe"
+
+
+def test_semgrep_resolution_prefers_bundled_executable(tmp_path, monkeypatch):
+    backend_dir = tmp_path / "backend"
+    backend_dir.mkdir()
+    agent_exe = backend_dir / "devsecops-agent.exe"
+    bundled_semgrep = backend_dir / "semgrep" / "win" / "semgrep.exe"
+    bundled_semgrep.parent.mkdir(parents=True)
+    agent_exe.write_text("", encoding="utf-8")
+    bundled_semgrep.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(semgrep_runner.sys, "executable", str(agent_exe))
+    monkeypatch.setattr(semgrep_runner.shutil, "which", lambda name: "C:\\Tools\\semgrep.exe")
+
+    assert semgrep_runner.resolve_semgrep_executable() == str(bundled_semgrep.resolve())
 
 
 def test_build_semgrep_command_with_multiple_configs(tmp_path):

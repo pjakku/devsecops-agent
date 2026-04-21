@@ -76,6 +76,8 @@ Build the executable:
 pyinstaller packaging\pyinstaller\devsecops-agent-windows.spec --clean --noconfirm
 ```
 
+Rebuild the executable after backend code changes; the frozen EXE includes the Semgrep resolver logic.
+
 The executable is generated at:
 
 ```text
@@ -88,6 +90,20 @@ The file can later be copied into the VS Code extension backend:
 devsecops-agent-vscode\backend\devsecops-agent.exe
 ```
 
+For production VS Code extension packaging, bundled Semgrep should be placed next to the backend executable. The preferred layout is:
+
+```text
+devsecops-agent-vscode\backend\devsecops-agent.exe
+devsecops-agent-vscode\backend\semgrep\win\semgrep.exe
+```
+
+The same layout can be used directly from the local PyInstaller output folder:
+
+```text
+dist\devsecops-agent.exe
+dist\semgrep\win\semgrep.exe
+```
+
 Verify the bundled executable:
 
 ```bash
@@ -96,11 +112,11 @@ dist\devsecops-agent.exe config init
 dist\devsecops-agent.exe scan .
 ```
 
-Semgrep remains an external executable dependency. The bundled `devsecops-agent.exe` still discovers `semgrep` from `PATH`; it does not bundle Semgrep itself.
+Bundled Semgrep is the preferred production path. During development, if no bundled Semgrep executable is found next to `devsecops-agent.exe`, the agent falls back to discovering `semgrep` from `PATH`.
 
 ## Optional Semgrep setup
 
-Semgrep is optional and is discovered from your system `PATH`. If it is not available, the CLI still runs and records Semgrep as skipped in the terminal summary and JSON report.
+Semgrep is resolved from `semgrep\win\semgrep.exe` next to the packaged backend first, then from your system `PATH` as a development fallback. If it is not available, the CLI still runs and records Semgrep as skipped in the terminal summary and JSON report.
 
 Install it locally with:
 
@@ -108,7 +124,7 @@ Install it locally with:
 python -m pip install semgrep
 ```
 
-Make sure the `semgrep` executable is on `PATH` after installation.
+For development fallback, make sure the `semgrep` executable is on `PATH` after installation.
 
 This setup does not use `--config auto`. The default Semgrep config list is explicit and currently includes:
 
@@ -215,7 +231,7 @@ Scanner execution:
     command: internal
   dependency_scanner: ran (1 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
-  semgrep: skipped (0 findings, configs=[p/python, p/kubernetes]) - Semgrep not found on PATH; skipping external SAST scan.
+  semgrep: skipped (0 findings, configs=[p/python, p/kubernetes]) - Semgrep not found. Checked bundled path C:\path\to\backend\semgrep\win\semgrep.exe and PATH; skipping external SAST scan.
 Severity totals:
   critical: 0
   high: 0

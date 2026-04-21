@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,13 +24,30 @@ SEMGREP_SEVERITY_MAP = {
     "INFO": "low",
 }
 
+BUNDLED_SEMGREP_RELATIVE_PATH = Path("semgrep") / "win" / "semgrep.exe"
+
 
 def resolve_semgrep_executable() -> str | None:
+    bundled_executable = resolve_bundled_semgrep_executable()
+    if bundled_executable is not None:
+        return str(bundled_executable)
     return shutil.which("semgrep")
 
 
 def is_semgrep_installed() -> bool:
     return resolve_semgrep_executable() is not None
+
+
+def resolve_bundled_semgrep_executable() -> Path | None:
+    candidate = get_bundled_semgrep_path()
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def get_bundled_semgrep_path() -> Path:
+    executable_dir = Path(sys.executable).resolve().parent
+    return executable_dir / BUNDLED_SEMGREP_RELATIVE_PATH
 
 
 def build_semgrep_command(
@@ -67,6 +85,7 @@ def run(
     executable = resolve_semgrep_executable()
     planned_command = build_semgrep_command("semgrep", target_path, semgrep_configs)
     if executable is None:
+        bundled_path = get_bundled_semgrep_path()
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
@@ -74,7 +93,10 @@ def run(
                 command=_format_command(planned_command),
                 configs_used=semgrep_configs,
                 findings_count=0,
-                message="Semgrep not found on PATH; skipping external SAST scan.",
+                message=(
+                    "Semgrep not found. Checked bundled path "
+                    f"{bundled_path} and PATH; skipping external SAST scan."
+                ),
                 stderr="",
             ),
             findings=[],
