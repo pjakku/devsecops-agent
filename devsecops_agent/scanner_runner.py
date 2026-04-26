@@ -10,6 +10,7 @@ from devsecops_agent.scanners import (
     gitleaks_runner,
     manifest_scanner,
     semgrep_runner,
+    script_scanner,
     source_scanner,
 )
 from devsecops_agent.utils import (
@@ -27,10 +28,11 @@ from devsecops_agent.utils import (
 )
 
 SCANNER_PIPELINE = (
-    ("source_scanner", source_scanner.run),
-    ("config_scanner", config_scanner.run),
-    ("manifest_scanner", manifest_scanner.run),
-    ("dependency_scanner", dependency_scanner.run),
+    ("source_scanner", source_scanner.run, "Internal placeholder scanner completed successfully."),
+    ("config_scanner", config_scanner.run, "Internal placeholder scanner completed successfully."),
+    ("manifest_scanner", manifest_scanner.run, "Internal placeholder scanner completed successfully."),
+    ("dependency_scanner", dependency_scanner.run, "Internal placeholder scanner completed successfully."),
+    ("script_scanner", script_scanner.run, "Internal script scanner completed successfully."),
 )
 
 
@@ -51,7 +53,7 @@ def run_scan(
     findings: list[Finding] = []
     scanners_run: list[str] = []
     scanner_executions: list[ScannerExecution] = []
-    for scanner_name, scanner in SCANNER_PIPELINE:
+    for scanner_name, scanner, success_message in SCANNER_PIPELINE:
         scanners_run.append(scanner_name)
         scanner_findings = scanner(files, resolved_target)
         findings.extend(scanner_findings)
@@ -62,7 +64,7 @@ def run_scan(
                 command="internal",
                 configs_used=[],
                 findings_count=len(scanner_findings),
-                message="Internal placeholder scanner completed successfully.",
+                message=success_message,
                 stderr="",
             )
         )

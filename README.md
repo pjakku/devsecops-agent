@@ -159,6 +159,10 @@ semgrep scan --json --quiet --config p/python --config p/java --config p/javascr
 | JavaScript / TypeScript / React / Node.js SAST | Semgrep |
 | Dockerfile checks | Semgrep |
 | Kubernetes checks | Semgrep + internal manifest scanner |
+| PowerShell risky script checks | Internal script_scanner |
+| Shell / Bash risky script checks | Internal script_scanner |
+| Node.js risky backend patterns | Internal script_scanner |
+| SQL risky query patterns | Internal script_scanner |
 | Secrets scanning | Gitleaks + internal source scanner |
 | Dependency file detection | Internal dependency scanner |
 
@@ -228,8 +232,10 @@ python -m devsecops_agent scan . --scanner semgrep
 python -m devsecops_agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
 python -m devsecops_agent scan . --semgrep-config p/javascript --semgrep-config p/typescript --scanner semgrep --show-all-findings
 python -m devsecops_agent scan . --semgrep-config p/dockerfile --semgrep-config p/kubernetes --scanner semgrep --show-all-findings
+python -m devsecops_agent scan . --scanner script_scanner --show-all-findings
 python -m devsecops_agent scan . --scanner gitleaks
 python -m devsecops_agent scan . --category secrets
+python -m devsecops_agent scan . --category script --show-all-findings
 python -m devsecops_agent scan . --show-all-findings
 ```
 
@@ -250,6 +256,7 @@ devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
 devsecops-agent scan . --no-semgrep
 devsecops-agent scan . --no-gitleaks
 devsecops-agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
+devsecops-agent scan . --scanner script_scanner --show-all-findings
 devsecops-agent scan . --summary-only --json-out reports\ci-scan.json --sarif-out reports\ci-scan.sarif
 devsecops-agent scan . --severity high --scanner gitleaks
 ```
@@ -323,7 +330,7 @@ Target: C:\projects\sample-app
 Total files: 12
 Total findings: 4
 Fail threshold: high
-Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner, semgrep, gitleaks
+Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner, script_scanner, semgrep, gitleaks
 Scanner execution:
   source_scanner: ran (0 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
@@ -333,13 +340,15 @@ Scanner execution:
     command: internal
   dependency_scanner: ran (1 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
+  script_scanner: ran (1 findings, configs=[n/a]) - Internal script scanner completed successfully.
+    command: internal
   semgrep: ran (2 findings, configs=[p/python, p/java, p/javascript, p/typescript, p/dockerfile, p/kubernetes]) - Semgrep scan completed successfully.
     command: semgrep scan --json --quiet --config p/python --config p/java --config p/javascript --config p/typescript --config p/dockerfile --config p/kubernetes .
   gitleaks: ran (1 findings, configs=[n/a]) - Gitleaks scan completed successfully.
     command: gitleaks detect --source . --report-format json --report-path <temp> --no-banner --no-git
 Severity totals:
   critical: 0
-  high: 2
+  high: 3
   medium: 1
   low: 0
   info: 1
@@ -347,15 +356,18 @@ Findings by scanner:
   dependency_scanner: 1
   gitleaks: 1
   semgrep: 2
+  script_scanner: 1
   source_scanner: 1
 Findings by category:
   dependency: 1
   sast: 2
   secrets: 2
+  script: 1
 Overall status: FAIL
 Report written to: C:\projects\sample-app\reports\scan-report.json
 Top findings:
   [high] source_scanner | Suspicious secrets-related filename detected | .env
+  [high] script_scanner | Risky Node.js command execution detected | server.js
   [high] gitleaks | generic-api-key | .env
   [medium] semgrep | Unsafe subprocess usage | app.py
   [low] semgrep | Possible weak validation | app.py
@@ -407,8 +419,10 @@ devsecops-agent scan . --scanner semgrep
 devsecops-agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
 devsecops-agent scan . --semgrep-config p/javascript --semgrep-config p/typescript --scanner semgrep --show-all-findings
 devsecops-agent scan . --semgrep-config p/dockerfile --semgrep-config p/kubernetes --scanner semgrep --show-all-findings
+devsecops-agent scan . --scanner script_scanner --show-all-findings
 devsecops-agent scan . --scanner gitleaks --show-all-findings
 devsecops-agent scan . --category secrets --show-all-findings
+devsecops-agent scan . --category script --show-all-findings
 devsecops-agent scan . --severity medium --show-all-findings
 ```
 
