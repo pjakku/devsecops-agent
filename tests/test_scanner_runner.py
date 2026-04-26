@@ -1531,6 +1531,26 @@ def test_cli_writes_sarif_output(tmp_path, monkeypatch):
     assert "SARIF written to:" in result.stdout
 
 
+def test_cli_writes_json_and_sarif_outputs_together(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
+    json_path = tmp_path / "artifacts" / "scan-report.json"
+    sarif_path = tmp_path / "artifacts" / "scan.sarif"
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
+    result = runner.invoke(
+        app,
+        ["scan", str(sample_dir), "--json-out", str(json_path), "--sarif-out", str(sarif_path)],
+    )
+
+    assert result.exit_code == 1
+    assert json_path.exists()
+    assert sarif_path.exists()
+    assert "Report written to:" in result.stdout
+    assert "SARIF written to:" in result.stdout
+
+
 def test_cli_displays_top_findings_in_severity_order(tmp_path, monkeypatch):
     sample_dir = tmp_path / "project"
     sample_dir.mkdir()

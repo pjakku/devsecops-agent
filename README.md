@@ -434,6 +434,32 @@ Generate both JSON and SARIF outputs:
 devsecops-agent scan . --json-out reports\scan-report.json --sarif-out reports\scan-report.sarif
 ```
 
+## SARIF / GitHub Code Scanning
+
+Generate a SARIF artifact locally:
+
+```bash
+devsecops-agent scan . --sarif-out reports\devsecops-agent.sarif
+```
+
+Generate JSON and SARIF together:
+
+```bash
+devsecops-agent scan . --json-out reports\scan-report.json --sarif-out reports\devsecops-agent.sarif
+```
+
+Example GitHub Actions workflow steps:
+
+```yaml
+- name: Run devsecops-agent
+  run: devsecops-agent scan . --sarif-out reports/devsecops-agent.sarif
+
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: reports/devsecops-agent.sarif
+```
+
 Example Jenkins PowerShell step:
 
 ```powershell
