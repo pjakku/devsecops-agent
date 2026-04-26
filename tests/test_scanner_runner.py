@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from devsecops_agent.cli import app, main
+from devsecops_agent.config import DEFAULT_SEMGREP_CONFIGS
 from devsecops_agent.models import Finding, ScannerExecution
 from devsecops_agent.scanner_runner import run_scan
 from devsecops_agent.scanners import gitleaks_runner, semgrep_runner
@@ -171,13 +172,13 @@ def test_deduplicates_overlapping_findings(tmp_path, monkeypatch):
     sample_dir.mkdir()
     (sample_dir / ".env").write_text("API_TOKEN=example\n", encoding="utf-8")
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=1,
                 message="Semgrep scan completed successfully.",
                 stderr="",
@@ -219,7 +220,7 @@ def test_semgrep_not_installed_is_skipped(tmp_path, monkeypatch):
     assert "checked bundled path" in semgrep_execution.message.lower()
     assert "semgrep" in semgrep_execution.message.lower()
     assert "path" in semgrep_execution.message.lower()
-    assert semgrep_execution.configs_used == ["p/python", "p/kubernetes"]
+    assert semgrep_execution.configs_used == DEFAULT_SEMGREP_CONFIGS
     assert semgrep_execution.stderr == ""
 
 
@@ -264,10 +265,12 @@ def test_semgrep_installed_with_no_findings(tmp_path, monkeypatch):
     )
     assert semgrep_execution.status == "ran"
     assert semgrep_execution.findings_count == 0
-    assert semgrep_execution.command == (
-        "semgrep scan --json --quiet --config p/python --config p/kubernetes {}".format(sample_dir.resolve())
-    )
-    assert semgrep_execution.configs_used == ["p/python", "p/kubernetes"]
+    expected_command = ["semgrep", "scan", "--json", "--quiet"]
+    for config_value in DEFAULT_SEMGREP_CONFIGS:
+        expected_command.extend(["--config", config_value])
+    expected_command.append(str(sample_dir.resolve()))
+    assert semgrep_execution.command == " ".join(expected_command)
+    assert semgrep_execution.configs_used == DEFAULT_SEMGREP_CONFIGS
     assert result.report.overall_status == "PASS"
 
 
@@ -333,6 +336,17 @@ def test_build_semgrep_command_with_multiple_configs(tmp_path):
     ]
 
 
+def test_build_semgrep_command_uses_expanded_default_configs(tmp_path):
+    command = semgrep_runner.build_semgrep_command("semgrep", tmp_path)
+
+    expected_command = ["semgrep", "scan", "--json", "--quiet"]
+    for config_value in DEFAULT_SEMGREP_CONFIGS:
+        expected_command.extend(["--config", config_value])
+    expected_command.append(str(tmp_path))
+
+    assert command == expected_command
+
+
 def test_build_gitleaks_command(tmp_path):
     report_path = tmp_path / "gitleaks.json"
     command = gitleaks_runner.build_gitleaks_command("gitleaks", tmp_path, report_path)
@@ -389,7 +403,7 @@ def test_semgrep_run_returns_valid_json_findings(tmp_path, monkeypatch):
     assert result.execution.status == "ran"
     assert result.execution.findings_count == 1
     assert result.execution.stderr == ""
-    assert result.execution.configs_used == ["p/python", "p/kubernetes"]
+    assert result.execution.configs_used == DEFAULT_SEMGREP_CONFIGS
     assert len(result.findings) == 1
     assert result.findings[0].severity == "medium"
 
@@ -451,7 +465,7 @@ def test_semgrep_failure_does_not_crash_scan(tmp_path, monkeypatch):
     assert semgrep_execution.findings_count == 0
     assert semgrep_execution.stderr == "Semgrep crashed"
     assert semgrep_execution.message == "Semgrep crashed"
-    assert semgrep_execution.configs_used == ["p/python", "p/kubernetes"]
+    assert semgrep_execution.configs_used == DEFAULT_SEMGREP_CONFIGS
     assert result.report.overall_status == "FAIL"
     assert any(finding.scanner_name == "source_scanner" for finding in result.report.findings)
 
@@ -478,6 +492,33 @@ def test_semgrep_failure_with_invalid_config_is_reported(tmp_path, monkeypatch):
     assert result.execution.configs_used == ["p/python", "p/invalid"]
     assert result.execution.stderr == "Failed to load config p/invalid"
     assert result.execution.message == "Failed to load config p/invalid"
+
+
+def test_run_scan_supports_custom_semgrep_configs(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "App.java").write_text("class App {}\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout='{"results": []}',
+            stderr="",
+        )
+
+    custom_configs = ["p/java", "p/kubernetes"]
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: "semgrep")
+    monkeypatch.setattr(semgrep_runner.subprocess, "run", fake_run)
+
+    result = run_scan(sample_dir, semgrep_configs=custom_configs)
+
+    semgrep_execution = next(
+        execution for execution in result.report.scanner_executions if execution.scanner_name == "semgrep"
+    )
+    assert semgrep_execution.status == "ran"
+    assert semgrep_execution.configs_used == custom_configs
+    assert "--config p/java --config p/kubernetes" in semgrep_execution.command
 
 
 def test_gitleaks_run_returns_valid_json_findings(tmp_path, monkeypatch):
@@ -683,6 +724,78 @@ def test_cli_supports_fail_on_and_json_out_and_no_semgrep(tmp_path, monkeypatch)
     assert output_path.exists()
 
 
+def test_cli_supports_custom_semgrep_config_override(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "App.java").write_text("class App {}\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout='{"results": []}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: "semgrep")
+    monkeypatch.setattr(semgrep_runner.subprocess, "run", fake_run)
+
+    result = runner.invoke(app, ["scan", str(sample_dir), "--semgrep-config", "p/java"])
+
+    assert result.exit_code == 0
+    assert "configs=[p/java]" in result.stdout
+    assert "--config p/java" in result.stdout
+    assert "--config p/python" not in result.stdout
+
+
+def test_cli_supports_multiple_custom_semgrep_configs(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "App.java").write_text("class App {}\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout='{"results": []}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: "semgrep")
+    monkeypatch.setattr(semgrep_runner.subprocess, "run", fake_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            str(sample_dir),
+            "--semgrep-config",
+            "p/javascript",
+            "--semgrep-config",
+            "p/typescript",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "configs=[p/javascript, p/typescript]" in result.stdout
+    assert "--config p/javascript --config p/typescript" in result.stdout
+
+
+def test_cli_no_semgrep_takes_precedence_over_custom_semgrep_configs(tmp_path):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "App.java").write_text("class App {}\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["scan", str(sample_dir), "--no-semgrep", "--semgrep-config", "p/java", "--summary-only"],
+    )
+
+    assert result.exit_code == 0
+    assert "Semgrep skipped by CLI option." in result.stdout
+    assert "configs=[p/java]" in result.stdout
+
+
 def test_cli_supports_no_gitleaks_option(tmp_path):
     sample_dir = tmp_path / "project"
     sample_dir.mkdir()
@@ -831,13 +944,13 @@ def test_cli_filters_findings_by_semgrep_scanner(tmp_path, monkeypatch):
     sample_dir.mkdir()
     (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=1,
                 message="Semgrep scan completed successfully.",
                 stderr="",
@@ -913,13 +1026,13 @@ def test_cli_medium_semgrep_finding_fails_when_threshold_is_medium(tmp_path, mon
     sample_dir.mkdir()
     (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=1,
                 message="Semgrep scan completed successfully.",
                 stderr="",
@@ -1210,13 +1323,13 @@ def test_cli_combined_filters_work_together(tmp_path, monkeypatch):
     (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
     (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=2,
                 message="Semgrep scan completed successfully.",
                 stderr="",
@@ -1295,13 +1408,13 @@ def test_cli_show_all_findings_with_medium_filter_displays_all_medium_rows(tmp_p
     (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
     (sample_dir / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=2,
                 message="Semgrep scan completed successfully.",
                 stderr="",
@@ -1455,13 +1568,13 @@ def test_cli_truncates_long_finding_titles(tmp_path, monkeypatch):
 
     long_title = "Very long finding title " * 8
 
-    def fake_semgrep_run(target_path, base_path):
+    def fake_semgrep_run(target_path, base_path, configs=None):
         return SemgrepRunResult(
             execution=ScannerExecution(
                 scanner_name="semgrep",
                 status="ran",
                 command="semgrep scan",
-                configs_used=["p/python", "p/kubernetes"],
+                configs_used=list(DEFAULT_SEMGREP_CONFIGS),
                 findings_count=1,
                 message="Semgrep scan completed successfully.",
                 stderr="",

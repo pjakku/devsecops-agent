@@ -55,7 +55,7 @@ def build_semgrep_command(
     target_path: Path,
     configs: list[str] | None = None,
 ) -> list[str]:
-    semgrep_configs = list(configs or DEFAULT_SEMGREP_CONFIGS)
+    semgrep_configs = resolve_semgrep_configs(configs)
     command = [
         executable,
         "scan",
@@ -81,7 +81,7 @@ def run(
     base_path: Path,
     configs: list[str] | None = None,
 ) -> SemgrepRunResult:
-    semgrep_configs = list(configs or DEFAULT_SEMGREP_CONFIGS)
+    semgrep_configs = resolve_semgrep_configs(configs)
     executable = resolve_semgrep_executable()
     planned_command = build_semgrep_command("semgrep", target_path, semgrep_configs)
     if executable is None:
@@ -215,6 +215,12 @@ def parse_semgrep_findings(payload: dict[str, object], base_path: Path) -> list[
         )
 
     return findings
+
+
+def resolve_semgrep_configs(configs: list[str] | None = None) -> list[str]:
+    if configs is None:
+        return list(DEFAULT_SEMGREP_CONFIGS)
+    return list(configs)
 
 
 def normalize_semgrep_severity(value: object) -> str:

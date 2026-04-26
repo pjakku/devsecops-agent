@@ -40,6 +40,7 @@ def run_scan(
     fail_on: str = "high",
     json_output_path: Path = Path("reports/scan-report.json"),
     include_semgrep: bool = True,
+    semgrep_configs: list[str] | None = None,
     include_gitleaks: bool = True,
 ) -> ScanResult:
     resolved_target = validate_target_path(target_path)
@@ -68,10 +69,11 @@ def run_scan(
 
     scanners_run.append("semgrep")
     if include_semgrep:
-        semgrep_result = semgrep_runner.run(resolved_target, resolved_target)
+        semgrep_result = semgrep_runner.run(resolved_target, resolved_target, configs=semgrep_configs)
         findings.extend(semgrep_result.findings)
         scanner_executions.append(semgrep_result.execution)
     else:
+        effective_semgrep_configs = semgrep_runner.resolve_semgrep_configs(semgrep_configs)
         scanner_executions.append(
             ScannerExecution(
                 scanner_name="semgrep",
@@ -80,10 +82,10 @@ def run_scan(
                     semgrep_runner.build_semgrep_command(
                         "semgrep",
                         resolved_target,
-                        semgrep_runner.DEFAULT_SEMGREP_CONFIGS,
+                        effective_semgrep_configs,
                     )
                 ),
-                configs_used=semgrep_runner.DEFAULT_SEMGREP_CONFIGS,
+                configs_used=effective_semgrep_configs,
                 findings_count=0,
                 message="Semgrep skipped by CLI option.",
                 stderr="",

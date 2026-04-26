@@ -8,6 +8,10 @@ from devsecops_agent.utils import ensure_directory
 
 DEFAULT_SEMGREP_CONFIGS = [
     "p/python",
+    "p/java",
+    "p/javascript",
+    "p/typescript",
+    "p/dockerfile",
     "p/kubernetes",
 ]
 

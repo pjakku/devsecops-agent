@@ -129,9 +129,13 @@ For development fallback, make sure the `semgrep` executable is on `PATH` after 
 This setup does not use `--config auto`. The default Semgrep config list is explicit and currently includes:
 
 - `p/python` for Python-focused rules
+- `p/java` for Java and Spring-oriented backend rules
+- `p/javascript` for JavaScript and Node.js coverage
+- `p/typescript` for TypeScript and React/frontend coverage
+- `p/dockerfile` for Dockerfile checks
 - `p/kubernetes` for Kubernetes-oriented manifest scanning
 
-Additional Semgrep configs can be added later in code and config.
+Use `--semgrep-config` one or more times to override the default list for a specific scan.
 
 When running on Windows, the Semgrep subprocess is started with:
 
@@ -143,8 +147,20 @@ PYTHONIOENCODING=utf-8
 Example explicit Semgrep invocation used by this project:
 
 ```bash
-semgrep scan --json --quiet --config p/python --config p/kubernetes .
+semgrep scan --json --quiet --config p/python --config p/java --config p/javascript --config p/typescript --config p/dockerfile --config p/kubernetes .
 ```
+
+## Coverage overview
+
+| Capability | Scanner |
+| --- | --- |
+| Python SAST | Semgrep |
+| Java / Spring SAST | Semgrep |
+| JavaScript / TypeScript / React / Node.js SAST | Semgrep |
+| Dockerfile checks | Semgrep |
+| Kubernetes checks | Semgrep + internal manifest scanner |
+| Secrets scanning | Gitleaks + internal source scanner |
+| Dependency file detection | Internal dependency scanner |
 
 ## Optional Gitleaks setup
 
@@ -209,6 +225,9 @@ python -m devsecops_agent scan . --max-findings 5
 python -m devsecops_agent scan . --sarif-out artifacts\scan-results.sarif
 python -m devsecops_agent scan . --severity high
 python -m devsecops_agent scan . --scanner semgrep
+python -m devsecops_agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
+python -m devsecops_agent scan . --semgrep-config p/javascript --semgrep-config p/typescript --scanner semgrep --show-all-findings
+python -m devsecops_agent scan . --semgrep-config p/dockerfile --semgrep-config p/kubernetes --scanner semgrep --show-all-findings
 python -m devsecops_agent scan . --scanner gitleaks
 python -m devsecops_agent scan . --category secrets
 python -m devsecops_agent scan . --show-all-findings
@@ -230,6 +249,7 @@ devsecops-agent scan . --fail-on high
 devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
 devsecops-agent scan . --no-semgrep
 devsecops-agent scan . --no-gitleaks
+devsecops-agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
 devsecops-agent scan . --summary-only --json-out reports\ci-scan.json --sarif-out reports\ci-scan.sarif
 devsecops-agent scan . --severity high --scanner gitleaks
 ```
@@ -277,7 +297,7 @@ Scanner execution:
     command: internal
   dependency_scanner: ran (1 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
-  semgrep: skipped (0 findings, configs=[p/python, p/kubernetes]) - Semgrep not found. Checked bundled path C:\path\to\backend\semgrep\win\semgrep.exe and PATH; skipping external SAST scan.
+  semgrep: skipped (0 findings, configs=[p/python, p/java, p/javascript, p/typescript, p/dockerfile, p/kubernetes]) - Semgrep not found. Checked bundled path C:\path\to\backend\semgrep\win\semgrep.exe and PATH; skipping external SAST scan.
   gitleaks: skipped (0 findings, configs=[n/a]) - Gitleaks not found. Checked bundled path C:\path\to\backend\gitleaks\win\gitleaks.exe and PATH; skipping external secrets scan.
 Severity totals:
   critical: 0
@@ -313,8 +333,8 @@ Scanner execution:
     command: internal
   dependency_scanner: ran (1 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
-  semgrep: ran (2 findings, configs=[p/python, p/kubernetes]) - Semgrep scan completed successfully.
-    command: semgrep scan --json --quiet --config p/python --config p/kubernetes .
+  semgrep: ran (2 findings, configs=[p/python, p/java, p/javascript, p/typescript, p/dockerfile, p/kubernetes]) - Semgrep scan completed successfully.
+    command: semgrep scan --json --quiet --config p/python --config p/java --config p/javascript --config p/typescript --config p/dockerfile --config p/kubernetes .
   gitleaks: ran (1 findings, configs=[n/a]) - Gitleaks scan completed successfully.
     command: gitleaks detect --source . --report-format json --report-path <temp> --no-banner --no-git
 Severity totals:
@@ -346,16 +366,19 @@ Top findings:
 
 ```text
 Scanner execution:
-  semgrep: failed (0 findings, configs=[p/python, p/kubernetes]) - Failed to load config p/kubernetes
-    command: semgrep scan --json --quiet --config p/python --config p/kubernetes .
+  semgrep: failed (0 findings, configs=[p/python, p/java, p/javascript, p/typescript, p/dockerfile, p/kubernetes]) - Failed to load config p/kubernetes
+    command: semgrep scan --json --quiet --config p/python --config p/java --config p/javascript --config p/typescript --config p/dockerfile --config p/kubernetes .
     stderr: Failed to load config p/kubernetes
 ```
 
-## Testing Python and Kubernetes samples
+## Testing multi-language samples
 
-To exercise both default Semgrep configs, scan a sample folder that contains:
+To exercise the default Semgrep coverage, scan sample folders that contain:
 
 - a Python file such as `app.py`
+- a Java file such as `App.java`
+- a JavaScript or TypeScript file such as `server.js` or `app.ts`
+- a Dockerfile
 - a Kubernetes manifest such as `deployment.yaml`
 
 Run:
@@ -381,6 +404,9 @@ Filtering examples:
 ```bash
 devsecops-agent scan . --severity high
 devsecops-agent scan . --scanner semgrep
+devsecops-agent scan . --semgrep-config p/java --scanner semgrep --show-all-findings
+devsecops-agent scan . --semgrep-config p/javascript --semgrep-config p/typescript --scanner semgrep --show-all-findings
+devsecops-agent scan . --semgrep-config p/dockerfile --semgrep-config p/kubernetes --scanner semgrep --show-all-findings
 devsecops-agent scan . --scanner gitleaks --show-all-findings
 devsecops-agent scan . --category secrets --show-all-findings
 devsecops-agent scan . --severity medium --show-all-findings

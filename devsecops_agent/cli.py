@@ -48,6 +48,10 @@ def scan(
         bool,
         typer.Option("--no-semgrep", help="Skip Semgrep even if it is installed."),
     ] = False,
+    semgrep_config: Annotated[
+        list[str] | None,
+        typer.Option("--semgrep-config", help="Override the Semgrep config list. Repeat to pass multiple configs."),
+    ] = None,
     no_gitleaks: Annotated[
         bool,
         typer.Option("--no-gitleaks", help="Skip Gitleaks even if it is installed."),
@@ -98,6 +102,7 @@ def scan(
             fail_on=normalized_fail_on,
             json_output_path=json_out,
             include_semgrep=not no_semgrep,
+            semgrep_configs=list(semgrep_config) if semgrep_config else None,
             include_gitleaks=not no_gitleaks,
         )
         report = result.report
