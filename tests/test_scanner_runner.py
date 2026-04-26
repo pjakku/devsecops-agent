@@ -10,7 +10,8 @@ from typer.testing import CliRunner
 from devsecops_agent.cli import app, main
 from devsecops_agent.models import Finding, ScannerExecution
 from devsecops_agent.scanner_runner import run_scan
-from devsecops_agent.scanners import semgrep_runner
+from devsecops_agent.scanners import gitleaks_runner, semgrep_runner
+from devsecops_agent.scanners.gitleaks_runner import GitleaksRunResult
 from devsecops_agent.scanners.semgrep_runner import SemgrepRunResult
 from devsecops_agent.utils import determine_overall_status
 
@@ -39,6 +40,12 @@ def extract_finding_rows(output: str) -> list[str]:
     return rows
 
 
+@pytest.fixture(autouse=True)
+def disable_external_scanners_by_default(monkeypatch):
+    monkeypatch.setattr(semgrep_runner.shutil, "which", lambda name: None)
+    monkeypatch.setattr(gitleaks_runner.shutil, "which", lambda name: None)
+
+
 def test_run_scan_raises_for_invalid_path(tmp_path):
     missing_path = tmp_path / "does-not-exist"
 
@@ -52,7 +59,6 @@ def test_run_scan_safe_folder_returns_pass(tmp_path, monkeypatch):
     (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
     (sample_dir / "README.md").write_text("# sample\n", encoding="utf-8")
 
-    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
     monkeypatch.chdir(tmp_path)
     result = run_scan(sample_dir)
 
@@ -61,6 +67,7 @@ def test_run_scan_safe_folder_returns_pass(tmp_path, monkeypatch):
     assert result.report.total_findings == 0
     assert result.report.overall_status == "PASS"
     assert any(execution.scanner_name == "semgrep" and execution.status == "skipped" for execution in result.report.scanner_executions)
+    assert any(execution.scanner_name == "gitleaks" and execution.status == "skipped" for execution in result.report.scanner_executions)
 
     report_path = Path.cwd() / "reports" / "scan-report.json"
     assert report_path.exists()
@@ -70,6 +77,7 @@ def test_run_scan_safe_folder_returns_pass(tmp_path, monkeypatch):
     assert report_data["total_findings"] == 0
     assert report_data["severity_summary"]["high"] == 0
     assert any(execution["scanner_name"] == "semgrep" and execution["status"] == "skipped" for execution in report_data["scanner_executions"])
+    assert any(execution["scanner_name"] == "gitleaks" and execution["status"] == "skipped" for execution in report_data["scanner_executions"])
 
 
 def test_run_scan_generates_findings_for_risky_files(tmp_path, monkeypatch):
@@ -91,7 +99,6 @@ def test_run_scan_generates_findings_for_risky_files(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
     monkeypatch.chdir(tmp_path)
     result = run_scan(sample_dir)
 
@@ -114,7 +121,6 @@ def test_run_scan_respects_fail_on_threshold(tmp_path, monkeypatch):
     sample_dir.mkdir()
     (sample_dir / "settings.yaml").write_text("password: demo\n", encoding="utf-8")
 
-    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
     result_warn = run_scan(sample_dir, fail_on="high")
     result_fail = run_scan(sample_dir, fail_on="medium")
 
@@ -128,7 +134,6 @@ def test_run_scan_supports_json_output_override(tmp_path, monkeypatch):
     (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
     output_path = tmp_path / "artifacts" / "custom-report.json"
 
-    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
     result = run_scan(sample_dir, json_output_path=output_path)
 
     assert Path(result.report_path) == output_path.resolve()
@@ -145,6 +150,20 @@ def test_run_scan_supports_no_semgrep_option(tmp_path):
     semgrep_execution = next(execution for execution in result.report.scanner_executions if execution.scanner_name == "semgrep")
     assert semgrep_execution.status == "skipped"
     assert "cli option" in semgrep_execution.message.lower()
+
+
+def test_run_scan_supports_no_gitleaks_option(tmp_path):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = run_scan(sample_dir, include_gitleaks=False)
+
+    gitleaks_execution = next(
+        execution for execution in result.report.scanner_executions if execution.scanner_name == "gitleaks"
+    )
+    assert gitleaks_execution.status == "skipped"
+    assert "cli option" in gitleaks_execution.message.lower()
 
 
 def test_deduplicates_overlapping_findings(tmp_path, monkeypatch):
@@ -190,7 +209,6 @@ def test_semgrep_not_installed_is_skipped(tmp_path, monkeypatch):
     sample_dir.mkdir()
     (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
 
-    monkeypatch.setattr(semgrep_runner, "resolve_semgrep_executable", lambda: None)
     result = run_scan(sample_dir)
 
     semgrep_execution = next(
@@ -203,6 +221,24 @@ def test_semgrep_not_installed_is_skipped(tmp_path, monkeypatch):
     assert "path" in semgrep_execution.message.lower()
     assert semgrep_execution.configs_used == ["p/python", "p/kubernetes"]
     assert semgrep_execution.stderr == ""
+
+
+def test_gitleaks_not_installed_is_skipped(tmp_path):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = run_scan(sample_dir)
+
+    gitleaks_execution = next(
+        execution for execution in result.report.scanner_executions if execution.scanner_name == "gitleaks"
+    )
+    assert gitleaks_execution.status == "skipped"
+    assert gitleaks_execution.findings_count == 0
+    assert "checked bundled path" in gitleaks_execution.message.lower()
+    assert "gitleaks" in gitleaks_execution.message.lower()
+    assert "path" in gitleaks_execution.message.lower()
+    assert gitleaks_execution.stderr == ""
 
 
 def test_semgrep_installed_with_no_findings(tmp_path, monkeypatch):
@@ -241,6 +277,12 @@ def test_semgrep_path_detection_uses_shutil_which(monkeypatch):
     assert semgrep_runner.resolve_semgrep_executable() == "C:\\Tools\\semgrep.exe"
 
 
+def test_gitleaks_path_detection_uses_shutil_which(monkeypatch):
+    monkeypatch.setattr(gitleaks_runner.shutil, "which", lambda name: "C:\\Tools\\gitleaks.exe" if name == "gitleaks" else None)
+
+    assert gitleaks_runner.resolve_gitleaks_executable() == "C:\\Tools\\gitleaks.exe"
+
+
 def test_semgrep_resolution_prefers_bundled_executable(tmp_path, monkeypatch):
     backend_dir = tmp_path / "backend"
     backend_dir.mkdir()
@@ -254,6 +296,21 @@ def test_semgrep_resolution_prefers_bundled_executable(tmp_path, monkeypatch):
     monkeypatch.setattr(semgrep_runner.shutil, "which", lambda name: "C:\\Tools\\semgrep.exe")
 
     assert semgrep_runner.resolve_semgrep_executable() == str(bundled_semgrep.resolve())
+
+
+def test_gitleaks_resolution_prefers_bundled_executable(tmp_path, monkeypatch):
+    backend_dir = tmp_path / "backend"
+    backend_dir.mkdir()
+    agent_exe = backend_dir / "devsecops-agent.exe"
+    bundled_gitleaks = backend_dir / "gitleaks" / "win" / "gitleaks.exe"
+    bundled_gitleaks.parent.mkdir(parents=True)
+    agent_exe.write_text("", encoding="utf-8")
+    bundled_gitleaks.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(gitleaks_runner.sys, "executable", str(agent_exe))
+    monkeypatch.setattr(gitleaks_runner.shutil, "which", lambda name: "C:\\Tools\\gitleaks.exe")
+
+    assert gitleaks_runner.resolve_gitleaks_executable() == str(bundled_gitleaks.resolve())
 
 
 def test_build_semgrep_command_with_multiple_configs(tmp_path):
@@ -273,6 +330,24 @@ def test_build_semgrep_command_with_multiple_configs(tmp_path):
         "--config",
         "p/kubernetes",
         str(tmp_path),
+    ]
+
+
+def test_build_gitleaks_command(tmp_path):
+    report_path = tmp_path / "gitleaks.json"
+    command = gitleaks_runner.build_gitleaks_command("gitleaks", tmp_path, report_path)
+
+    assert command == [
+        "gitleaks",
+        "detect",
+        "--source",
+        str(tmp_path),
+        "--report-format",
+        "json",
+        "--report-path",
+        str(report_path),
+        "--no-banner",
+        "--no-git",
     ]
 
 
@@ -405,11 +480,177 @@ def test_semgrep_failure_with_invalid_config_is_reported(tmp_path, monkeypatch):
     assert result.execution.message == "Failed to load config p/invalid"
 
 
+def test_gitleaks_run_returns_valid_json_findings(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        report_path = Path(args[0][args[0].index("--report-path") + 1])
+        report_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "RuleID": "generic-api-key",
+                        "Description": "Generic API key",
+                        "File": str(sample_dir / "secrets.txt"),
+                        "StartLine": 4,
+                        "Fingerprint": "abc123",
+                        "Commit": "1234567890abcdef",
+                        "Author": "Dev User",
+                        "Email": "dev@example.com",
+                        "Redacted": "ghp_****",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="",
+            stderr="",
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "resolve_gitleaks_executable", lambda: "gitleaks")
+    monkeypatch.setattr(gitleaks_runner.subprocess, "run", fake_run)
+
+    result = gitleaks_runner.run(sample_dir, sample_dir)
+
+    assert result.execution.status == "ran"
+    assert result.execution.findings_count == 1
+    assert result.execution.stderr == ""
+    assert len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.scanner_name == "gitleaks"
+    assert finding.category == "secrets"
+    assert finding.severity == "high"
+    assert finding.file_path == "secrets.txt"
+    assert finding.line_number == 4
+    assert "gitleaks" in finding.description.lower()
+    assert "ghp_****" in finding.description
+    assert "1234567890ab" in finding.description
+
+
+def test_gitleaks_success_with_info_logs_does_not_populate_stderr(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        report_path = Path(args[0][args[0].index("--report-path") + 1])
+        report_path.write_text("[]", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout="",
+            stderr="INFO scanned 1 files",
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "resolve_gitleaks_executable", lambda: "gitleaks")
+    monkeypatch.setattr(gitleaks_runner.subprocess, "run", fake_run)
+
+    result = gitleaks_runner.run(sample_dir, sample_dir)
+
+    assert result.execution.status == "ran"
+    assert result.execution.findings_count == 0
+    assert result.execution.stderr == ""
+    assert result.execution.message == "INFO scanned 1 files"
+
+
+def test_parse_gitleaks_findings_normalizes_fields(tmp_path):
+    payload = [
+        {
+            "RuleID": "aws-access-key",
+            "Description": "AWS access key detected",
+            "File": str(tmp_path / ".env"),
+            "StartLine": 8,
+            "Fingerprint": "fp-123",
+            "Author": "Security Bot",
+            "Email": "security@example.com",
+            "Redacted": "AKIA****",
+        }
+    ]
+
+    findings = gitleaks_runner.parse_gitleaks_findings(payload, tmp_path)
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.scanner_name == "gitleaks"
+    assert finding.category == "secrets"
+    assert finding.severity == "high"
+    assert finding.title == "aws-access-key"
+    assert finding.file_path == ".env"
+    assert finding.line_number == 8
+    assert "fp-123" in finding.description
+    assert "AKIA****" in finding.description
+
+
+def test_gitleaks_failure_does_not_crash_scan(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=2,
+            stdout="",
+            stderr="Gitleaks crashed",
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "resolve_gitleaks_executable", lambda: "gitleaks")
+    monkeypatch.setattr(gitleaks_runner.subprocess, "run", fake_run)
+
+    result = run_scan(sample_dir)
+
+    gitleaks_execution = next(
+        execution for execution in result.report.scanner_executions if execution.scanner_name == "gitleaks"
+    )
+    assert gitleaks_execution.status == "failed"
+    assert gitleaks_execution.findings_count == 0
+    assert gitleaks_execution.stderr == "Gitleaks crashed"
+    assert gitleaks_execution.message == "Gitleaks crashed"
+    assert result.report.overall_status == "PASS"
+
+
+def test_main_exit_code_gitleaks_failure_does_not_crash_safe_scan(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=2,
+            stdout="",
+            stderr="Gitleaks crashed",
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "resolve_gitleaks_executable", lambda: "gitleaks")
+    monkeypatch.setattr(gitleaks_runner.subprocess, "run", fake_run)
+
+    result = main(["scan", str(sample_dir)])
+
+    assert result == 0
+
+
 def test_semgrep_runner_sets_windows_utf8_env(monkeypatch):
     monkeypatch.setattr(semgrep_runner.os, "name", "nt")
     monkeypatch.setattr(semgrep_runner.os, "environ", {"PATH": "C:\\Tools"})
 
     environment = semgrep_runner.build_semgrep_environment()
+
+    assert environment["PATH"] == "C:\\Tools"
+    assert environment["PYTHONUTF8"] == "1"
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_gitleaks_runner_sets_windows_utf8_env(monkeypatch):
+    monkeypatch.setattr(gitleaks_runner.os, "name", "nt")
+    monkeypatch.setattr(gitleaks_runner.os, "environ", {"PATH": "C:\\Tools"})
+
+    environment = gitleaks_runner.build_gitleaks_environment()
 
     assert environment["PATH"] == "C:\\Tools"
     assert environment["PYTHONUTF8"] == "1"
@@ -440,6 +681,17 @@ def test_cli_supports_fail_on_and_json_out_and_no_semgrep(tmp_path, monkeypatch)
     assert "Fail threshold: medium" in result.stdout
     assert "Semgrep skipped by CLI option." in result.stdout
     assert output_path.exists()
+
+
+def test_cli_supports_no_gitleaks_option(tmp_path):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-gitleaks"])
+
+    assert result.exit_code == 0
+    assert "Gitleaks skipped by CLI option." in result.stdout
 
 
 def test_main_exit_code_safe_scan_is_zero(tmp_path, monkeypatch):
@@ -488,6 +740,16 @@ def test_main_exit_code_with_no_semgrep_safe_scan_is_zero(tmp_path):
     (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
 
     result = main(["scan", str(sample_dir), "--no-semgrep"])
+
+    assert result == 0
+
+
+def test_main_exit_code_with_no_semgrep_and_no_gitleaks_safe_scan_is_zero(tmp_path):
+    sample_dir = tmp_path / "safe-project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = main(["scan", str(sample_dir), "--no-semgrep", "--no-gitleaks"])
 
     assert result == 0
 
@@ -603,6 +865,47 @@ def test_cli_filters_findings_by_semgrep_scanner(tmp_path, monkeypatch):
     assert finding_rows
     assert all("semgrep" in line for line in finding_rows)
     assert any("Unsafe subprocess usage" in line for line in finding_rows)
+
+
+def test_cli_filters_findings_by_gitleaks_scanner(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_gitleaks_run(target_path, base_path):
+        return GitleaksRunResult(
+            execution=ScannerExecution(
+                scanner_name="gitleaks",
+                status="ran",
+                command="gitleaks detect",
+                configs_used=[],
+                findings_count=1,
+                message="Gitleaks scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="gitleaks",
+                    category="secrets",
+                    severity="high",
+                    title="generic-api-key",
+                    description="Potential secret detected by Gitleaks.",
+                    file_path="secrets.txt",
+                    line_number=3,
+                    recommendation="Rotate the secret.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "run", fake_gitleaks_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--scanner", "gitleaks", "--show-all-findings"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert len(finding_rows) == 1
+    assert "gitleaks" in finding_rows[0]
+    assert "generic-api-key" in finding_rows[0]
 
 
 def test_cli_medium_semgrep_finding_fails_when_threshold_is_medium(tmp_path, monkeypatch):
@@ -727,6 +1030,178 @@ def test_cli_filters_findings_by_category(tmp_path, monkeypatch):
     assert len(finding_rows) == 1
     assert "dependency_scanner" in finding_rows[0]
     assert "Dependency manifest detected" in finding_rows[0]
+
+
+def test_cli_filters_findings_by_secret_category(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_gitleaks_run(target_path, base_path):
+        return GitleaksRunResult(
+            execution=ScannerExecution(
+                scanner_name="gitleaks",
+                status="ran",
+                command="gitleaks detect",
+                configs_used=[],
+                findings_count=1,
+                message="Gitleaks scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="gitleaks",
+                    category="secrets",
+                    severity="high",
+                    title="aws-access-key",
+                    description="Potential secret detected by Gitleaks.",
+                    file_path="secrets.txt",
+                    line_number=6,
+                    recommendation="Rotate the secret.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "run", fake_gitleaks_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--category", "secrets", "--show-all-findings"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert all(" secrets " in row or " secrets       " in row for row in finding_rows)
+    assert any("aws-access-key" in row for row in finding_rows)
+
+
+def test_cli_secret_category_alias_maps_to_secrets(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_gitleaks_run(target_path, base_path):
+        return GitleaksRunResult(
+            execution=ScannerExecution(
+                scanner_name="gitleaks",
+                status="ran",
+                command="gitleaks detect",
+                configs_used=[],
+                findings_count=1,
+                message="Gitleaks scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="gitleaks",
+                    category="secrets",
+                    severity="high",
+                    title="aws-access-key",
+                    description="Potential secret detected by Gitleaks.",
+                    file_path="secrets.txt",
+                    line_number=6,
+                    recommendation="Rotate the secret.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "run", fake_gitleaks_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--category", "secret", "--show-all-findings"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert any("aws-access-key" in row for row in finding_rows)
+
+
+def test_cli_high_severity_filter_includes_gitleaks_findings(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_gitleaks_run(target_path, base_path):
+        return GitleaksRunResult(
+            execution=ScannerExecution(
+                scanner_name="gitleaks",
+                status="ran",
+                command="gitleaks detect",
+                configs_used=[],
+                findings_count=1,
+                message="Gitleaks scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="gitleaks",
+                    category="secrets",
+                    severity="high",
+                    title="generic-api-key",
+                    description="Potential secret detected by Gitleaks.",
+                    file_path="secrets.txt",
+                    line_number=3,
+                    recommendation="Rotate the secret.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "run", fake_gitleaks_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--severity", "high", "--show-all-findings"])
+
+    assert result.exit_code == 1
+    finding_rows = extract_finding_rows(result.stdout)
+    assert finding_rows
+    assert any("generic-api-key" in row for row in finding_rows)
+
+
+def test_cli_no_semgrep_does_not_skip_gitleaks(tmp_path, monkeypatch):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "secrets.txt").write_text("placeholder\n", encoding="utf-8")
+
+    def fake_gitleaks_run(target_path, base_path):
+        return GitleaksRunResult(
+            execution=ScannerExecution(
+                scanner_name="gitleaks",
+                status="ran",
+                command="gitleaks detect",
+                configs_used=[],
+                findings_count=1,
+                message="Gitleaks scan completed successfully.",
+                stderr="",
+            ),
+            findings=[
+                Finding(
+                    finding_id="",
+                    scanner_name="gitleaks",
+                    category="secrets",
+                    severity="high",
+                    title="generic-api-key",
+                    description="Potential secret detected by Gitleaks.",
+                    file_path="secrets.txt",
+                    line_number=2,
+                    recommendation="Rotate the secret.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(gitleaks_runner, "run", fake_gitleaks_run)
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--scanner", "gitleaks"])
+
+    assert result.exit_code == 1
+    assert "Semgrep skipped by CLI option." in result.stdout
+    assert "Gitleaks scan completed successfully." in result.stdout
+
+
+def test_cli_no_semgrep_and_no_gitleaks_skips_both_external_scanners(tmp_path):
+    sample_dir = tmp_path / "project"
+    sample_dir.mkdir()
+    (sample_dir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["scan", str(sample_dir), "--no-semgrep", "--no-gitleaks"])
+
+    assert result.exit_code == 0
+    assert "Semgrep skipped by CLI option." in result.stdout
+    assert "Gitleaks skipped by CLI option." in result.stdout
 
 
 def test_cli_combined_filters_work_together(tmp_path, monkeypatch):

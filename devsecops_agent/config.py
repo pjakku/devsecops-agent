@@ -20,7 +20,9 @@ DEFAULT_CONFIG: dict[str, object] = {
             "enabled": True,
             "configs": DEFAULT_SEMGREP_CONFIGS,
         },
-        "gitleaks": False,
+        "gitleaks": {
+            "enabled": True,
+        },
         "trivy": False,
         "dependency": False,
     },

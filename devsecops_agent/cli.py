@@ -48,6 +48,10 @@ def scan(
         bool,
         typer.Option("--no-semgrep", help="Skip Semgrep even if it is installed."),
     ] = False,
+    no_gitleaks: Annotated[
+        bool,
+        typer.Option("--no-gitleaks", help="Skip Gitleaks even if it is installed."),
+    ] = False,
     summary_only: Annotated[
         bool,
         typer.Option("--summary-only", help="Print only the high-level summary."),
@@ -94,6 +98,7 @@ def scan(
             fail_on=normalized_fail_on,
             json_output_path=json_out,
             include_semgrep=not no_semgrep,
+            include_gitleaks=not no_gitleaks,
         )
         report = result.report
 
@@ -237,9 +242,16 @@ def _select_terminal_findings(
         normalized_scanner = scanner.strip().lower()
         filtered = [finding for finding in filtered if finding.scanner_name.strip().lower() == normalized_scanner]
     if category is not None:
-        normalized_category = category.strip().lower()
+        normalized_category = _normalize_category_filter(category)
         filtered = [finding for finding in filtered if finding.category.strip().lower() == normalized_category]
     return sort_findings(filtered)
+
+
+def _normalize_category_filter(category: str) -> str:
+    normalized_category = category.strip().lower()
+    if normalized_category == "secret":
+        return "secrets"
+    return normalized_category
 
 
 def _format_finding_header() -> str:

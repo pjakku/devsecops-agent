@@ -1,6 +1,6 @@
 # devsecops-agent
 
-`devsecops-agent` is a Python CLI foundation for a future DevSecOps scanning tool. It provides a normalized internal scan workflow, optional Semgrep-based SAST scanning, structured findings, JSON report output, and default configuration bootstrapping.
+`devsecops-agent` is a Python CLI foundation for a future DevSecOps scanning tool. It provides a normalized internal scan workflow, optional Semgrep-based SAST scanning, optional Gitleaks-based secrets scanning, structured findings, JSON report output, and default configuration bootstrapping.
 
 ## Project Status
 
@@ -12,7 +12,7 @@ Praveen Jakku
 
 ## Features
 
-- `scan <target_path>` validates a target path, inspects project files, runs internal scanners, optionally runs Semgrep when available, deduplicates overlapping findings, prints a summary, and writes a JSON report
+- `scan <target_path>` validates a target path, inspects project files, runs internal scanners, optionally runs Semgrep and Gitleaks when available, deduplicates overlapping findings, prints a summary, and writes a JSON report
 - `version` prints the installed package version
 - `config init` creates a starter YAML configuration file
 
@@ -146,6 +146,49 @@ Example explicit Semgrep invocation used by this project:
 semgrep scan --json --quiet --config p/python --config p/kubernetes .
 ```
 
+## Optional Gitleaks setup
+
+`devsecops-agent` can optionally use Gitleaks for secrets detection. Gitleaks is executed as an external CLI tool, not imported as a Python package. If it is installed and available from a bundled backend location or on `PATH`, the agent will run it automatically during scans. If it is unavailable, the scan continues and Gitleaks is marked as skipped in scanner metadata.
+
+`devsecops-agent` runs Gitleaks against the current file tree with `--no-git`, so normal folders and sample projects that are not Git repositories are still scanned correctly.
+
+Bundled backends use the same sidecar pattern as Semgrep. On Windows, the preferred packaged layout is:
+
+```text
+devsecops-agent.exe
+gitleaks\win\gitleaks.exe
+```
+
+Development fallback uses `gitleaks` from `PATH`.
+
+Installation examples:
+
+macOS:
+
+```bash
+brew install gitleaks
+```
+
+Windows:
+
+```powershell
+winget install gitleaks
+```
+
+Linux:
+
+```bash
+gitleaks version
+```
+
+Use the official Gitleaks release binary or your package manager where available.
+
+Example invocation used by this project:
+
+```bash
+gitleaks detect --source . --report-format json --no-banner --no-git
+```
+
 ## Run with `python -m`
 
 ```bash
@@ -160,12 +203,14 @@ Additional scan examples:
 python -m devsecops_agent scan . --fail-on medium
 python -m devsecops_agent scan . --json-out artifacts\scan-report.json
 python -m devsecops_agent scan . --no-semgrep
+python -m devsecops_agent scan . --no-gitleaks
 python -m devsecops_agent scan . --summary-only
 python -m devsecops_agent scan . --max-findings 5
 python -m devsecops_agent scan . --sarif-out artifacts\scan-results.sarif
 python -m devsecops_agent scan . --severity high
 python -m devsecops_agent scan . --scanner semgrep
-python -m devsecops_agent scan . --category manifest
+python -m devsecops_agent scan . --scanner gitleaks
+python -m devsecops_agent scan . --category secrets
 python -m devsecops_agent scan . --show-all-findings
 ```
 
@@ -184,8 +229,9 @@ CI-friendly examples:
 devsecops-agent scan . --fail-on high
 devsecops-agent scan . --fail-on medium --json-out reports\ci-scan.json
 devsecops-agent scan . --no-semgrep
+devsecops-agent scan . --no-gitleaks
 devsecops-agent scan . --summary-only --json-out reports\ci-scan.json --sarif-out reports\ci-scan.sarif
-devsecops-agent scan . --severity high --scanner semgrep
+devsecops-agent scan . --severity high --scanner gitleaks
 ```
 
 ## Exit codes
@@ -232,6 +278,7 @@ Scanner execution:
   dependency_scanner: ran (1 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
   semgrep: skipped (0 findings, configs=[p/python, p/kubernetes]) - Semgrep not found. Checked bundled path C:\path\to\backend\semgrep\win\semgrep.exe and PATH; skipping external SAST scan.
+  gitleaks: skipped (0 findings, configs=[n/a]) - Gitleaks not found. Checked bundled path C:\path\to\backend\gitleaks\win\gitleaks.exe and PATH; skipping external secrets scan.
 Severity totals:
   critical: 0
   high: 0
@@ -256,7 +303,7 @@ Target: C:\projects\sample-app
 Total files: 12
 Total findings: 4
 Fail threshold: high
-Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner, semgrep
+Scanner modules run: source_scanner, config_scanner, manifest_scanner, dependency_scanner, semgrep, gitleaks
 Scanner execution:
   source_scanner: ran (0 findings, configs=[n/a]) - Internal placeholder scanner completed successfully.
     command: internal
@@ -268,24 +315,28 @@ Scanner execution:
     command: internal
   semgrep: ran (2 findings, configs=[p/python, p/kubernetes]) - Semgrep scan completed successfully.
     command: semgrep scan --json --quiet --config p/python --config p/kubernetes .
+  gitleaks: ran (1 findings, configs=[n/a]) - Gitleaks scan completed successfully.
+    command: gitleaks detect --source . --report-format json --report-path <temp> --no-banner --no-git
 Severity totals:
   critical: 0
-  high: 1
+  high: 2
   medium: 1
   low: 0
   info: 1
 Findings by scanner:
   dependency_scanner: 1
+  gitleaks: 1
   semgrep: 2
   source_scanner: 1
 Findings by category:
   dependency: 1
   sast: 2
-  secrets: 1
+  secrets: 2
 Overall status: FAIL
 Report written to: C:\projects\sample-app\reports\scan-report.json
 Top findings:
   [high] source_scanner | Suspicious secrets-related filename detected | .env
+  [high] gitleaks | generic-api-key | .env
   [medium] semgrep | Unsafe subprocess usage | app.py
   [low] semgrep | Possible weak validation | app.py
   [info] dependency_scanner | Dependency manifest detected | package.json
@@ -330,7 +381,8 @@ Filtering examples:
 ```bash
 devsecops-agent scan . --severity high
 devsecops-agent scan . --scanner semgrep
-devsecops-agent scan . --category dependency
+devsecops-agent scan . --scanner gitleaks --show-all-findings
+devsecops-agent scan . --category secrets --show-all-findings
 devsecops-agent scan . --severity medium --show-all-findings
 ```
 

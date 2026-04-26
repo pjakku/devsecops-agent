@@ -50,6 +50,7 @@ class ScannerExecution:
 class ScanOptions:
     fail_on: Severity = "high"
     include_semgrep: bool = True
+    include_gitleaks: bool = True
     json_output_path: str = "reports/scan-report.json"
 
 

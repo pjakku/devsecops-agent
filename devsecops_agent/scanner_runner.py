@@ -4,7 +4,14 @@ from pathlib import Path
 
 from devsecops_agent.models import Finding, ScanReport, ScanResult, ScannerExecution
 from devsecops_agent.report_writer import write_report
-from devsecops_agent.scanners import config_scanner, dependency_scanner, manifest_scanner, semgrep_runner, source_scanner
+from devsecops_agent.scanners import (
+    config_scanner,
+    dependency_scanner,
+    gitleaks_runner,
+    manifest_scanner,
+    semgrep_runner,
+    source_scanner,
+)
 from devsecops_agent.utils import (
     assign_finding_ids,
     calculate_category_summary,
@@ -33,6 +40,7 @@ def run_scan(
     fail_on: str = "high",
     json_output_path: Path = Path("reports/scan-report.json"),
     include_semgrep: bool = True,
+    include_gitleaks: bool = True,
 ) -> ScanResult:
     resolved_target = validate_target_path(target_path)
     started_at = utc_now_iso()
@@ -78,6 +86,30 @@ def run_scan(
                 configs_used=semgrep_runner.DEFAULT_SEMGREP_CONFIGS,
                 findings_count=0,
                 message="Semgrep skipped by CLI option.",
+                stderr="",
+            )
+        )
+
+    scanners_run.append("gitleaks")
+    if include_gitleaks:
+        gitleaks_result = gitleaks_runner.run(resolved_target, resolved_target)
+        findings.extend(gitleaks_result.findings)
+        scanner_executions.append(gitleaks_result.execution)
+    else:
+        scanner_executions.append(
+            ScannerExecution(
+                scanner_name="gitleaks",
+                status="skipped",
+                command=" ".join(
+                    gitleaks_runner.build_gitleaks_command(
+                        "gitleaks",
+                        resolved_target,
+                        Path("<report-path>"),
+                    )
+                ),
+                configs_used=[],
+                findings_count=0,
+                message="Gitleaks skipped by CLI option.",
                 stderr="",
             )
         )
